@@ -37,6 +37,7 @@
 	}: {
 		/** A listed summary shows the header and toolbar while the full message loads. */
 		message: MessageSummary | MessageDetail;
+		/** Passed in the all-accounts view only; a single account's view already names it. */
 		account: AccountSummary | undefined;
 		destinations: MoveDestination[];
 		/** Role of the folder being viewed, which decides Trash vs. Delete forever and Spam vs. Not spam. */
@@ -48,6 +49,12 @@
 	} = $props();
 
 	const detail = $derived('html' in message ? message : null);
+	// A label that is one of the recipients' addresses already names the account.
+	const namedAccount = $derived.by(() => {
+		const label = account?.label.toLowerCase();
+		const recipients = [...message.to, ...(detail?.cc ?? []), ...(detail?.bcc ?? [])];
+		return recipients.some((r) => r.address.toLowerCase() === label) ? undefined : account;
+	});
 	let allowRemote = $state(false);
 	let thread = $state<MessageSummary[] | null>(null);
 	let threadState = $state<'idle' | 'loading' | 'error'>('idle');
@@ -68,15 +75,18 @@
 	}
 </script>
 
-<article class="flex min-h-0 flex-col" aria-label="Message">
-	<div class="flex flex-wrap items-center gap-1 border-b p-2">
-		<Button href={closeHref} variant="ghost" size="sm" class="lg:hidden">
+<article class="@container flex min-h-0 flex-col" aria-label="Message">
+	<!-- In a narrow reader the labels hide and the buttons tighten, so the toolbar keeps one row. -->
+	<div
+		class="flex flex-wrap items-center gap-0.5 border-b p-2 @max-2xl:[&>[data-slot=button]]:px-1.5"
+	>
+		<Button href={closeHref} variant="ghost" size="sm" class="lg:hidden" title="Back">
 			<ArrowLeft />
-			Back
+			<span class="sr-only">Back</span>
 		</Button>
 		<Button href={compose({ reply: message.ref })} variant="ghost" size="sm" title="Reply (r)">
 			<Reply />
-			Reply
+			<span class="@max-2xl:sr-only">Reply</span>
 		</Button>
 		<Button
 			href={compose({ reply: message.ref, all: '1' })}
@@ -85,13 +95,11 @@
 			title="Reply all (a)"
 		>
 			<ReplyAll />
-			<span class="hidden sm:inline">Reply all</span>
-			<span class="sr-only sm:hidden">Reply all</span>
+			<span class="@max-2xl:sr-only">Reply all</span>
 		</Button>
 		<Button href={compose({ forward: message.ref })} variant="ghost" size="sm" title="Forward (f)">
 			<Forward />
-			<span class="hidden sm:inline">Forward</span>
-			<span class="sr-only sm:hidden">Forward</span>
+			<span class="@max-2xl:sr-only">Forward</span>
 		</Button>
 		<span class="mx-1 h-5 w-px bg-border" aria-hidden="true"></span>
 		{#if role !== 'archive'}
@@ -126,9 +134,14 @@
 		</Button>
 		<MoveMenu {destinations} onmove={(target) => onaction('move', { target })} />
 		{#if role === 'spam'}
-			<Button variant="ghost" size="sm" onclick={() => onaction('move', { target: 'inbox' })}>
+			<Button
+				variant="ghost"
+				size="sm"
+				title="Not spam"
+				onclick={() => onaction('move', { target: 'inbox' })}
+			>
 				<Inbox />
-				Not spam
+				<span class="sr-only">Not spam</span>
 			</Button>
 		{:else}
 			<Button
@@ -141,16 +154,22 @@
 				<span class="sr-only">Report spam</span>
 			</Button>
 		{/if}
-		<span class="flex-1"></span>
 		{#if role === 'trash' || role === 'spam'}
-			<Button variant="ghost" size="sm" class="text-destructive" onclick={ondeleteforever}>
+			<Button
+				variant="ghost"
+				size="sm"
+				class="ml-auto text-destructive"
+				title="Delete forever"
+				onclick={ondeleteforever}
+			>
 				<Trash2 />
-				Delete forever
+				<span class="sr-only">Delete forever</span>
 			</Button>
 		{:else}
 			<Button
 				variant="ghost"
 				size="sm"
+				class="ml-auto"
 				title="Move to trash (#)"
 				onclick={() => onaction('move', { target: 'trash' })}
 			>
@@ -189,10 +208,10 @@
 				</div>
 				<div class="flex flex-col items-end gap-0.5 text-muted-foreground">
 					<time datetime={message.date}>{longDate(message.date)}</time>
-					{#if account}
+					{#if namedAccount}
 						<span class="flex items-center gap-1">
-							<AccountSwatch color={account.color} />
-							{account.label}
+							<AccountSwatch color={namedAccount.color} />
+							{namedAccount.label}
 						</span>
 					{/if}
 				</div>
