@@ -3,7 +3,6 @@
 	import Archive from '@lucide/svelte/icons/archive';
 	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
 	import Download from '@lucide/svelte/icons/download';
-	import FolderInput from '@lucide/svelte/icons/folder-input';
 	import Forward from '@lucide/svelte/icons/forward';
 	import Inbox from '@lucide/svelte/icons/inbox';
 	import Mail from '@lucide/svelte/icons/mail';
@@ -14,28 +13,22 @@
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import AccountSwatch from '#lib/components/account-swatch.svelte';
 	import MessageBody from '#lib/components/mail/message-body.svelte';
+	import MoveMenu from '#lib/components/mail/move-menu.svelte';
 	import { Button } from '#lib/components/ui/button/index.js';
-	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
 	import { Spinner } from '#lib/components/ui/spinner/index.js';
 	import { fileSize, formatAddress, longDate, senderName } from '#lib/format.js';
-	import {
-		FOLDER_ROLE_LABELS,
-		type AccountSummary,
-		type FolderRole,
-		type MessageDetail,
-		type MessageSummary
+	import type {
+		AccountSummary,
+		FolderRole,
+		MessageDetail,
+		MessageSummary
 	} from '#lib/mail-types.js';
-
-	interface FolderEntry {
-		path: string;
-		name: string;
-		role: FolderRole | null;
-	}
+	import type { MoveDestination } from '#lib/move-targets.js';
 
 	let {
 		message,
 		account,
-		folders,
+		destinations,
 		role,
 		closeHref,
 		hrefFor,
@@ -45,7 +38,7 @@
 		/** A listed summary shows the header and toolbar while the full message loads. */
 		message: MessageSummary | MessageDetail;
 		account: AccountSummary | undefined;
-		folders: FolderEntry[];
+		destinations: MoveDestination[];
 		/** Role of the folder being viewed, which decides Trash vs. Delete forever and Spam vs. Not spam. */
 		role: FolderRole | null;
 		closeHref: string;
@@ -61,8 +54,6 @@
 
 	const compose = (params: Record<string, string>) =>
 		`${resolve('/(app)/compose')}?${new URLSearchParams(params)}`;
-
-	const moveTargets = $derived(folders.filter((f) => f.role !== 'drafts'));
 
 	async function loadThread() {
 		threadState = 'loading';
@@ -133,27 +124,7 @@
 			<Star class={message.starred ? 'fill-current' : ''} />
 			<span class="sr-only">{message.starred ? 'Unstar' : 'Star'}</span>
 		</Button>
-		<DropdownMenu.Root>
-			<DropdownMenu.Trigger>
-				{#snippet child({ props })}
-					<Button {...props} variant="ghost" size="sm" title="Move to folder">
-						<FolderInput />
-						<span class="sr-only">Move to folder</span>
-					</Button>
-				{/snippet}
-			</DropdownMenu.Trigger>
-			<DropdownMenu.Content align="end" class="max-h-80 max-w-72 overflow-y-auto">
-				{#each moveTargets as folder (folder.path)}
-					<DropdownMenu.Item
-						onSelect={() => onaction('move', { target: folder.role ?? folder.path })}
-					>
-						<span class="truncate"
-							>{folder.role ? FOLDER_ROLE_LABELS[folder.role] : folder.path}</span
-						>
-					</DropdownMenu.Item>
-				{/each}
-			</DropdownMenu.Content>
-		</DropdownMenu.Root>
+		<MoveMenu {destinations} onmove={(target) => onaction('move', { target })} />
 		{#if role === 'spam'}
 			<Button variant="ghost" size="sm" onclick={() => onaction('move', { target: 'inbox' })}>
 				<Inbox />

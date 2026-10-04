@@ -5,6 +5,7 @@
 	import { navigating, page } from '$app/state';
 	import { toast } from 'svelte-sonner';
 	import Archive from '@lucide/svelte/icons/archive';
+	import Inbox from '@lucide/svelte/icons/inbox';
 	import Mail from '@lucide/svelte/icons/mail';
 	import MailOpen from '@lucide/svelte/icons/mail-open';
 	import Menu from '@lucide/svelte/icons/menu';
@@ -16,6 +17,7 @@
 	import MailSidebar from '#lib/components/mail/mail-sidebar.svelte';
 	import MessageList from '#lib/components/mail/message-list.svelte';
 	import MessageReader from '#lib/components/mail/message-reader.svelte';
+	import MoveMenu from '#lib/components/mail/move-menu.svelte';
 	import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
@@ -33,6 +35,7 @@
 		type MessagePage,
 		type MessageSummary
 	} from '#lib/mail-types.js';
+	import { canMoveTo, moveDestinations, type MoveDestination } from '#lib/move-targets.js';
 
 	let { data } = $props();
 
@@ -261,7 +264,31 @@
 	});
 
 	const selectedRefs = $derived([...selected]);
+	const selectedMessages = $derived(messages.filter((m) => selected.has(m.ref)));
 	const allSelected = $derived(messages.length > 0 && selected.size === messages.length);
+	const allStarred = $derived(selectedMessages.every((m) => m.starred));
+
+	const view = $derived({ role, folder: data.folder });
+	const accountsOf = (refs: Iterable<string>) => {
+		const wanted = new Set(refs);
+		return new Set(messages.filter((m) => wanted.has(m.ref)).map((m) => m.accountId));
+	};
+	const selectedDestinations = $derived(moveDestinations(data.folders, accountsOf(selected), view));
+
+	// Messages dragged onto a sidebar folder move there.
+	let dragging = $state<string[] | null>(null);
+	const dropAccepts = $derived.by(() => {
+		if (!dragging) return null;
+		const accountIds = accountsOf(dragging);
+		return (destination: MoveDestination) => canMoveTo(destination, accountIds, view);
+	});
+
+	function dropOn(destination: MoveDestination) {
+		const refs = dragging ?? [];
+		// The dragged rows disappear at once, so their dragend may never fire.
+		dragging = null;
+		act('move', refs, { target: destination.key });
+	}
 
 	function openIndex(index: number) {
 		const message = messages[index];
@@ -357,6 +384,8 @@
 		scope={activeScope}
 		folder={activeFolder}
 		{onnavigate}
+		accepts={dropAccepts}
+		ondrop={dropOn}
 	/>
 {/snippet}
 
@@ -364,7 +393,7 @@
 	<MessageReader
 		{message}
 		account={accountsById.get(message.accountId)}
-		folders={data.folders[message.accountId] ?? []}
+		destinations={moveDestinations(data.folders, new Set([message.accountId]), view)}
 		{role}
 		{closeHref}
 		{hrefFor}
@@ -461,10 +490,13 @@
 						<Button
 							variant="ghost"
 							size="sm"
-							title="Star"
-							onclick={() => act('flag', selectedRefs, { flagged: 'true' })}
+							title={allStarred ? 'Unstar' : 'Star'}
+							aria-pressed={allStarred}
+							onclick={() => act('flag', selectedRefs, { flagged: String(!allStarred) })}
 						>
-							<Star /><span class="sr-only">Star</span>
+							<Star class={allStarred ? 'fill-current' : ''} /><span class="sr-only"
+								>{allStarred ? 'Unstar' : 'Star'}</span
+							>
 						</Button>
 						{#if role !== 'archive'}
 							<Button
@@ -476,7 +508,20 @@
 								<Archive /><span class="sr-only">Archive</span>
 							</Button>
 						{/if}
-						{#if role !== 'spam'}
+						<MoveMenu
+							destinations={selectedDestinations}
+							onmove={(target) => act('move', selectedRefs, { target })}
+						/>
+						{#if role === 'spam'}
+							<Button
+								variant="ghost"
+								size="sm"
+								title="Not spam"
+								onclick={() => act('move', selectedRefs, { target: 'inbox' })}
+							>
+								<Inbox /><span class="sr-only">Not spam</span>
+							</Button>
+						{:else}
 							<Button
 								variant="ghost"
 								size="sm"
@@ -557,6 +602,8 @@
 					showAccount={data.scope === 'all'}
 					showRecipient={role === 'sent' || role === 'drafts'}
 					{hrefFor}
+					ondragstart={(refs) => (dragging = refs)}
+					ondragend={() => (dragging = null)}
 				/>
 				{#if cursor}
 					<div class="p-3">
