@@ -3,19 +3,8 @@
 	import AlertTriangle from '@lucide/svelte/icons/triangle-alert';
 	import Plus from '@lucide/svelte/icons/plus';
 	import AccountSwatch from '#lib/components/account-swatch.svelte';
-	import {
-		FOLDER_ROLES,
-		FOLDER_ROLE_LABELS,
-		type AccountSummary,
-		type FolderRole
-	} from '#lib/mail-types.js';
-
-	interface FolderEntry {
-		path: string;
-		name: string;
-		depth: number;
-		role: FolderRole | null;
-	}
+	import { FOLDER_ROLES, FOLDER_ROLE_LABELS, type AccountSummary } from '#lib/mail-types.js';
+	import { folderDestination, type FolderEntry, type MoveDestination } from '#lib/move-targets.js';
 
 	let {
 		accounts,
@@ -23,7 +12,9 @@
 		unread,
 		scope,
 		folder,
-		onnavigate
+		onnavigate,
+		accepts = null,
+		ondrop
 	}: {
 		accounts: AccountSummary[];
 		folders: Record<string, FolderEntry[]>;
@@ -31,7 +22,38 @@
 		scope: string;
 		folder: string;
 		onnavigate?: () => void;
+		/** While messages are dragged, whether a folder takes them. */
+		accepts?: ((destination: MoveDestination) => boolean) | null;
+		ondrop?: (destination: MoveDestination) => void;
 	} = $props();
+
+	let dropTarget = $state<MoveDestination | null>(null);
+
+	const sameDestination = (a: MoveDestination | null, b: MoveDestination) =>
+		a?.accountId === b.accountId && a?.key === b.key;
+
+	/** Drop handlers for a folder link; inert unless the dragged messages can move there. */
+	function droppable(destination: MoveDestination) {
+		return {
+			ondragover: (event: DragEvent) => {
+				if (!accepts?.(destination)) return;
+				event.preventDefault();
+				if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+				dropTarget = destination;
+			},
+			ondragleave: (event: DragEvent) => {
+				const target = event.currentTarget as HTMLElement;
+				if (target.contains(event.relatedTarget as Node | null)) return;
+				if (sameDestination(dropTarget, destination)) dropTarget = null;
+			},
+			ondrop: (event: DragEvent) => {
+				dropTarget = null;
+				if (!accepts?.(destination)) return;
+				event.preventDefault();
+				ondrop?.(destination);
+			}
+		};
+	}
 
 	const totalUnread = $derived(
 		Object.values(unread).reduce<number>((sum, count) => sum + (count ?? 0), 0)
@@ -41,10 +63,12 @@
 		return resolve('/(app)/mail/[scope]/[...folder]', { scope: scopeValue, folder: folderValue });
 	}
 
-	function linkClass(active: boolean) {
+	function linkClass(active: boolean, destination?: MoveDestination) {
+		const dropping = destination && accepts && sameDestination(dropTarget, destination);
 		return [
 			'flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-sm',
-			active ? 'bg-accent font-medium text-accent-foreground' : 'hover:bg-accent/60'
+			active ? 'bg-accent font-medium text-accent-foreground' : 'hover:bg-accent/60',
+			dropping && 'bg-accent outline-1 -outline-offset-1 outline-foreground outline-dashed'
 		];
 	}
 </script>
@@ -54,9 +78,11 @@
 		<h2 class="px-2 pb-1 text-xs font-medium text-muted-foreground">All accounts</h2>
 		{#each FOLDER_ROLES as role (role)}
 			{@const active = scope === 'all' && folder === role}
+			{@const destination = { accountId: null, key: role, role }}
 			<a
 				href={href('all', role)}
-				class={linkClass(active)}
+				class={linkClass(active, destination)}
+				{...droppable(destination)}
 				aria-current={active ? 'page' : undefined}
 				onclick={onnavigate}
 			>
@@ -87,9 +113,11 @@
 			{#each folders[account.id] ?? [] as entry (entry.path)}
 				{@const key = entry.role ?? entry.path}
 				{@const active = scope === account.id && folder === key}
+				{@const destination = folderDestination(account.id, entry)}
 				<a
 					href={href(account.id, key)}
-					class={linkClass(active)}
+					class={linkClass(active, destination)}
+					{...droppable(destination)}
 					style:padding-left="{0.5 + (entry.role ? 0 : entry.depth) * 0.75}rem"
 					aria-current={active ? 'page' : undefined}
 					onclick={onnavigate}

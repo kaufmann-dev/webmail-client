@@ -11,7 +11,8 @@ and on the consent screen you choose which mail accounts each app may use and at
 
 - **Mail:** a unified inbox (and Drafts, Sent, Archive, Spam, Trash) across accounts, per-account
   folders, search (Gmail search syntax for Gmail), unread and starred filters, multi-select actions,
-  keyboard shortcuts (`?` lists them), and a conversation view.
+  moving messages by dragging them onto a folder, keyboard shortcuts (`?` lists them), and a
+  conversation view.
 - **Reading:** HTML mail renders in a sandboxed frame with no scripts. Remote images stay blocked
   until you load them.
 - **Writing:** reply, reply all, forward (attachments included), drafts, attachments, and a
