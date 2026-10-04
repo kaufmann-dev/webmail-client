@@ -1,4 +1,5 @@
 import { fail } from '@sveltejs/kit';
+import { MCP_RESOURCE } from '#lib/server/auth.js';
 import {
 	grantsFromForm,
 	listConnectedApps,
@@ -8,7 +9,8 @@ import {
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals }) => ({
-	apps: await listConnectedApps(locals.user.id)
+	apps: await listConnectedApps(locals.user.id),
+	mcpUrl: MCP_RESOURCE
 });
 
 function clientIdFrom(form: FormData) {
