@@ -43,7 +43,7 @@
 
 	function linkClass(active: boolean) {
 		return [
-			'flex min-w-0 items-center gap-2 px-2 py-1.5 text-sm',
+			'flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-sm',
 			active ? 'bg-accent font-medium text-accent-foreground' : 'hover:bg-accent/60'
 		];
 	}

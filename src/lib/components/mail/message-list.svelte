@@ -62,7 +62,7 @@
 			>
 				<div class="flex min-w-0 items-center gap-2">
 					{#if unread}
-						<span class="size-2 shrink-0 bg-foreground" aria-hidden="true"></span>
+						<span class="size-2 shrink-0 rounded-full bg-foreground" aria-hidden="true"></span>
 						<span class="sr-only">Unread.</span>
 					{/if}
 					<span class={['min-w-0 flex-1 truncate text-sm', unread && 'font-semibold']}>

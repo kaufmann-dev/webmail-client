@@ -68,8 +68,8 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
 
 ## UI
 
-- Follow the flat, square, motionless defaults enforced in `src/routes/layout.css`. Pure
-  `#ffffff` and `#000000` backgrounds.
+- Follow the flat (no shadows), lightly rounded (`--radius`), motionless defaults enforced in
+  `src/routes/layout.css`. Monochrome: a white light background and a soft near-black dark one.
 - Color appears only as account colors (`--account-*`), always next to the account label.
 - User actions show their result at once and finish in the background (`postAction` in
   `src/lib/form-action.ts`); a failure undoes the change and shows a toast. Sending continues after

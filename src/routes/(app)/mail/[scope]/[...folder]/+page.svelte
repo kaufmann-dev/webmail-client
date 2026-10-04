@@ -513,7 +513,7 @@
 								href={urlWith({ filter: filter === 'all' ? null : filter, m: null })}
 								aria-current={activeFilter === filter ? 'page' : undefined}
 								class={[
-									'px-2 py-1 capitalize',
+									'rounded-md px-2 py-1 capitalize',
 									activeFilter === filter
 										? 'bg-accent font-medium'
 										: 'text-muted-foreground hover:text-foreground'
