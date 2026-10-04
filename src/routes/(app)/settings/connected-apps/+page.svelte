@@ -17,7 +17,7 @@
 	const revoked = new SvelteSet<string>();
 	const apps = $derived(data.apps.filter((app) => !revoked.has(app.clientId)));
 	const longDate = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
-	const claudeCode = $derived(`claude mcp add --transport http mail ${data.mcpUrl}`);
+	const claudeCode = $derived(`claude mcp add -s user --transport http mail ${data.mcpUrl}`);
 	const codex = $derived(`codex mcp add mail --url ${data.mcpUrl}`);
 
 	async function revoke(clientId: string) {
