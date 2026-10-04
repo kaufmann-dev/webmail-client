@@ -91,7 +91,7 @@ The app is a remote MCP server at `https://mail.kaufmann.dev/mcp` (Streamable HT
 own OAuth 2.1 authorization server, so MCP clients connect with just the URL:
 
 ```bash
-claude mcp add --transport http mail https://mail.kaufmann.dev/mcp   # then /mcp → Authenticate
+claude mcp add -s user --transport http mail https://mail.kaufmann.dev/mcp   # then /mcp → Authenticate
 codex mcp add mail --url https://mail.kaufmann.dev/mcp && codex mcp login mail
 ```
 
