@@ -27,9 +27,9 @@
 	import * as Sheet from '#lib/components/ui/sheet/index.js';
 	import { Spinner } from '#lib/components/ui/spinner/index.js';
 	import { postAction } from '#lib/form-action.js';
+	import { switchedFolder, viewedRole } from '#lib/mail-scope.js';
 	import {
 		FOLDER_ROLE_LABELS,
-		isFolderRole,
 		LIST_FILTERS,
 		type MessageDetail,
 		type MessagePage,
@@ -45,11 +45,7 @@
 	const opened = $derived(data.message);
 
 	const accountsById = $derived(new Map(data.accounts.map((a) => [a.id, a])));
-	const role = $derived(
-		isFolderRole(data.folder)
-			? data.folder
-			: (data.folders[data.scope]?.find((f) => f.path === data.folder)?.role ?? null)
-	);
+	const role = $derived(viewedRole(data.scope, data.folder, data.folders));
 	const title = $derived.by(() => {
 		const folderName = role
 			? FOLDER_ROLE_LABELS[role]
@@ -306,6 +302,16 @@
 		const current = messages.findIndex((m) => m.ref === shownRef);
 		const compose = (params: Record<string, string>) =>
 			goto(`${resolve('/(app)/compose')}?${new URLSearchParams(params)}`);
+		if (/^[0-9]$/.test(event.key)) {
+			// 0 shows all accounts; 1 to 9 show the accounts in their Settings order.
+			const index = Number(event.key);
+			const scope = index === 0 ? 'all' : data.accounts[index - 1]?.id;
+			if (!scope || scope === data.scope) return;
+			event.preventDefault();
+			const folder = switchedFolder(role, scope, data.folders);
+			goto(resolve('/(app)/mail/[scope]/[...folder]', { scope, folder }));
+			return;
+		}
 		switch (event.key) {
 			case 'j':
 				openIndex(current + 1);
@@ -368,6 +374,8 @@
 		['#', 'Move to trash'],
 		['u', 'Mark unread'],
 		['c', 'Compose'],
+		['0', 'All accounts'],
+		['1 – 9', 'Account 1 to 9'],
 		['/', 'Search'],
 		['?', 'Show shortcuts']
 	];
@@ -424,7 +432,7 @@
 					variant="ghost"
 					size="sm"
 					class="lg:hidden"
-					aria-label="Folders"
+					aria-label="Mailboxes"
 					onclick={() => (sidebarOpen = true)}
 				>
 					<Menu />
@@ -651,7 +659,7 @@
 <Sheet.Root bind:open={sidebarOpen}>
 	<Sheet.Content side="left" class="w-72 overflow-y-auto p-0">
 		<Sheet.Header class="border-b">
-			<Sheet.Title>Folders</Sheet.Title>
+			<Sheet.Title>Mailboxes</Sheet.Title>
 		</Sheet.Header>
 		{@render sidebar(() => (sidebarOpen = false))}
 	</Sheet.Content>
