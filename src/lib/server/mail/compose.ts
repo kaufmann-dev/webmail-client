@@ -8,7 +8,7 @@ import { errorMessage, MailError } from './errors';
 import { requireFolder, resolveFolder } from './folders';
 import { withClient, withMailbox } from './imap';
 import { encodeMessageRef } from './message-ref';
-import { deleteMessages, getMessage, groupRefs, resolveRef, setFlags } from './messages';
+import { deleteMessages, getMessage, groupRefs, resolveRef } from './messages';
 import { PROVIDER_CONFIG } from './providers';
 import { createSmtpTransport } from './smtp';
 import {
@@ -296,9 +296,4 @@ export async function saveDraft(
 			.catch(() => undefined);
 	}
 	return ref;
-}
-
-/** Marks a message read; used when the web UI opens it. */
-export async function markRead(userId: string, ref: string): Promise<void> {
-	await setFlags(await groupRefs(userId, [ref]), { seen: true });
 }

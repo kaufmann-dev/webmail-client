@@ -42,7 +42,8 @@
 		onaction,
 		ondeleteforever
 	}: {
-		message: MessageDetail;
+		/** A listed summary shows the header and toolbar while the full message loads. */
+		message: MessageSummary | MessageDetail;
 		account: AccountSummary | undefined;
 		folders: FolderEntry[];
 		/** Role of the folder being viewed, which decides Trash vs. Delete forever and Spam vs. Not spam. */
@@ -53,6 +54,7 @@
 		ondeleteforever: () => void;
 	} = $props();
 
+	const detail = $derived('html' in message ? message : null);
 	let allowRemote = $state(false);
 	let thread = $state<MessageSummary[] | null>(null);
 	let threadState = $state<'idle' | 'loading' | 'error'>('idle');
@@ -203,14 +205,14 @@
 							>To: {message.to.map(formatAddress).join(', ')}</span
 						>
 					{/if}
-					{#if message.cc.length}
+					{#if detail?.cc.length}
 						<span class="break-words text-muted-foreground"
-							>Cc: {message.cc.map(formatAddress).join(', ')}</span
+							>Cc: {detail.cc.map(formatAddress).join(', ')}</span
 						>
 					{/if}
-					{#if message.bcc.length}
+					{#if detail?.bcc.length}
 						<span class="break-words text-muted-foreground"
-							>Bcc: {message.bcc.map(formatAddress).join(', ')}</span
+							>Bcc: {detail.bcc.map(formatAddress).join(', ')}</span
 						>
 					{/if}
 				</div>
@@ -226,78 +228,85 @@
 			</div>
 		</header>
 
-		{#if message.hasRemoteImages && !allowRemote}
-			<div class="flex flex-wrap items-center gap-2 border p-2 text-sm">
-				<span class="flex-1">Remote images are blocked to keep senders from tracking you.</span>
-				<Button variant="outline" size="sm" onclick={() => (allowRemote = true)}>Load images</Button
-				>
-			</div>
-		{/if}
-
-		<MessageBody html={message.html} {allowRemote} />
-
-		{#if message.attachments.length}
-			<section aria-labelledby="attachments-heading" class="flex flex-col gap-2">
-				<h2 id="attachments-heading" class="text-sm font-medium">
-					{message.attachments.length} attachment{message.attachments.length === 1 ? '' : 's'}
-				</h2>
-				<ul class="flex flex-wrap gap-2">
-					{#each message.attachments as attachment (attachment.partId)}
-						<li>
-							<a
-								href="/api/messages/{message.ref}/attachments/{attachment.partId}"
-								download={attachment.filename}
-								class="flex max-w-72 items-center gap-2 border px-3 py-2 text-sm hover:bg-accent"
-							>
-								<Download class="size-4 shrink-0" />
-								<span class="min-w-0 truncate">{attachment.filename}</span>
-								<span class="shrink-0 text-xs text-muted-foreground"
-									>{fileSize(attachment.size)}</span
-								>
-							</a>
-						</li>
-					{/each}
-				</ul>
-			</section>
-		{/if}
-
-		<section aria-label="Conversation" class="flex flex-col gap-2 border-t pt-4">
-			{#if thread}
-				<h2 class="text-sm font-medium">Conversation ({thread.length})</h2>
-				<ol class="flex flex-col">
-					{#each thread as item (item.ref)}
-						<li>
-							<a
-								href={hrefFor(item.ref)}
-								class={[
-									'flex min-w-0 items-center gap-2 px-2 py-1.5 text-sm hover:bg-accent',
-									item.messageId === message.messageId && 'font-medium'
-								]}
-							>
-								<span class="min-w-0 flex-1 truncate">{senderName(item.from)}: {item.subject}</span>
-								<time datetime={item.date} class="shrink-0 text-xs text-muted-foreground">
-									{longDate(item.date)}
-								</time>
-							</a>
-						</li>
-					{/each}
-				</ol>
-			{:else}
-				<div class="flex items-center gap-2">
-					<Button
-						variant="outline"
-						size="sm"
-						onclick={loadThread}
-						disabled={threadState === 'loading'}
+		{#if detail}
+			{#if detail.hasRemoteImages && !allowRemote}
+				<div class="flex flex-wrap items-center gap-2 border p-2 text-sm">
+					<span class="flex-1">Remote images are blocked to keep senders from tracking you.</span>
+					<Button variant="outline" size="sm" onclick={() => (allowRemote = true)}
+						>Load images</Button
 					>
-						{#if threadState === 'loading'}<Spinner aria-label="Loading conversation" />{/if}
-						Show conversation
-					</Button>
-					{#if threadState === 'error'}
-						<span class="text-sm text-destructive">The conversation could not be loaded.</span>
-					{/if}
 				</div>
 			{/if}
-		</section>
+
+			<MessageBody html={detail.html} {allowRemote} />
+
+			{#if detail.attachments.length}
+				<section aria-labelledby="attachments-heading" class="flex flex-col gap-2">
+					<h2 id="attachments-heading" class="text-sm font-medium">
+						{detail.attachments.length} attachment{detail.attachments.length === 1 ? '' : 's'}
+					</h2>
+					<ul class="flex flex-wrap gap-2">
+						{#each detail.attachments as attachment (attachment.partId)}
+							<li>
+								<a
+									href="/api/messages/{message.ref}/attachments/{attachment.partId}"
+									download={attachment.filename}
+									class="flex max-w-72 items-center gap-2 border px-3 py-2 text-sm hover:bg-accent"
+								>
+									<Download class="size-4 shrink-0" />
+									<span class="min-w-0 truncate">{attachment.filename}</span>
+									<span class="shrink-0 text-xs text-muted-foreground"
+										>{fileSize(attachment.size)}</span
+									>
+								</a>
+							</li>
+						{/each}
+					</ul>
+				</section>
+			{/if}
+
+			<section aria-label="Conversation" class="flex flex-col gap-2 border-t pt-4">
+				{#if thread}
+					<h2 class="text-sm font-medium">Conversation ({thread.length})</h2>
+					<ol class="flex flex-col">
+						{#each thread as item (item.ref)}
+							<li>
+								<a
+									href={hrefFor(item.ref)}
+									class={[
+										'flex min-w-0 items-center gap-2 px-2 py-1.5 text-sm hover:bg-accent',
+										item.messageId === message.messageId && 'font-medium'
+									]}
+								>
+									<span class="min-w-0 flex-1 truncate"
+										>{senderName(item.from)}: {item.subject}</span
+									>
+									<time datetime={item.date} class="shrink-0 text-xs text-muted-foreground">
+										{longDate(item.date)}
+									</time>
+								</a>
+							</li>
+						{/each}
+					</ol>
+				{:else}
+					<div class="flex items-center gap-2">
+						<Button
+							variant="outline"
+							size="sm"
+							onclick={loadThread}
+							disabled={threadState === 'loading'}
+						>
+							{#if threadState === 'loading'}<Spinner aria-label="Loading conversation" />{/if}
+							Show conversation
+						</Button>
+						{#if threadState === 'error'}
+							<span class="text-sm text-destructive">The conversation could not be loaded.</span>
+						{/if}
+					</div>
+				{/if}
+			</section>
+		{:else}
+			<Spinner aria-label="Loading message" class="mx-auto" />
+		{/if}
 	</div>
 </article>

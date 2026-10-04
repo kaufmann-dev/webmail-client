@@ -1,5 +1,6 @@
 import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
+import type { MessageDetail } from '#lib/mail-types.js';
 import { errorMessage, MailError } from '#lib/server/mail/errors.js';
 import { InvalidMessageRefError } from '#lib/server/mail/message-ref.js';
 import {
@@ -13,24 +14,27 @@ import {
 } from '#lib/server/mail/messages.js';
 import type { Actions, PageServerLoad } from './$types';
 
-/** The open message (`?m=`). Opening it marks it read. */
-export const load: PageServerLoad = async ({ url, locals }) => {
-	const ref = url.searchParams.get('m');
-	if (!ref) return { message: null, messageError: null };
+type OpenedMessage = { detail: MessageDetail; error: null } | { detail: null; error: string };
+
+async function openMessage(userId: string, ref: string): Promise<OpenedMessage> {
 	try {
-		const { account, locator } = await resolveRef(locals.user.id, ref);
-		const { detail } = await getMessage(account, locator);
-		if (detail.unread) {
-			await setFlags(await groupRefs(locals.user.id, [ref]), { seen: true });
-			detail.unread = false;
-		}
-		return { message: detail, messageError: null };
+		const { account, locator } = await resolveRef(userId, ref);
+		return { detail: (await getMessage(account, locator)).detail, error: null };
 	} catch (error) {
 		if (error instanceof MailError || error instanceof InvalidMessageRefError) {
-			return { message: null, messageError: error.message };
+			return { detail: null, error: error.message };
 		}
 		throw error;
 	}
+}
+
+/**
+ * The open message (`?m=`), streamed so the reader opens before the body arrives. Loading never
+ * marks it read (links preload on hover); the page does that once it is shown.
+ */
+export const load: PageServerLoad = ({ url, locals }) => {
+	const ref = url.searchParams.get('m');
+	return { message: ref ? openMessage(locals.user.id, ref) : null };
 };
 
 const refsSchema = z.array(z.string().min(1)).min(1).max(500);

@@ -1,5 +1,7 @@
 <script lang="ts">
+	import { SvelteSet } from 'svelte/reactivity';
 	import { enhance } from '$app/forms';
+	import { invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { toast } from 'svelte-sonner';
@@ -14,14 +16,54 @@
 	import { Label } from '#lib/components/ui/label/index.js';
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
 	import { Textarea } from '#lib/components/ui/textarea/index.js';
+	import { postAction } from '#lib/form-action.js';
 	import { ACCOUNT_COLORS, PROVIDER_LABELS, type AccountSummary } from '#lib/mail-types.js';
 
 	let { data, form } = $props();
 
 	let removing = $state<AccountSummary | null>(null);
-	let removeForm = $state<HTMLFormElement | null>(null);
+	// Removing and reordering show at once and are saved in the background.
+	const removed = new SvelteSet<string>();
+	let localOrder = $state<string[] | null>(null);
+	let queuedMoves = 0;
+	let moves = Promise.resolve();
+
+	const accounts = $derived.by(() => {
+		const byId = new Map(data.accounts.map((a) => [a.id, a]));
+		const ordered = localOrder ? localOrder.flatMap((id) => byId.get(id) ?? []) : data.accounts;
+		return ordered.filter((a) => !removed.has(a.id));
+	});
 
 	const connected = $derived(page.url.searchParams.get('connected'));
+	const actionUrl = (name: string) => `${resolve('/(app)/settings/accounts')}?/${name}`;
+
+	/** Saves moves one after another, so each applies to the order the one before left. */
+	function moveAccount(id: string, direction: 'up' | 'down') {
+		const order = accounts.map((a) => a.id);
+		const from = order.indexOf(id);
+		const to = from + (direction === 'up' ? -1 : 1);
+		if (from < 0 || to < 0 || to >= order.length) return;
+		[order[from], order[to]] = [order[to], order[from]];
+		localOrder = order;
+		queuedMoves++;
+		moves = moves.then(async () => {
+			const error = await postAction(actionUrl('move'), { id, direction });
+			if (error) toast.error(error);
+			if (--queuedMoves > 0 && !error) return;
+			await invalidateAll();
+			if (queuedMoves === 0) localOrder = null;
+		});
+	}
+
+	async function removeAccount(id: string) {
+		removed.add(id);
+		const error = await postAction(actionUrl('delete'), { id });
+		if (error) {
+			removed.delete(id);
+			toast.error(error);
+		}
+		await invalidateAll();
+	}
 </script>
 
 <svelte:head><title>Mail accounts · Mail</title></svelte:head>
@@ -41,7 +83,7 @@
 		</Alert.Root>
 	{/if}
 
-	{#each data.accounts as account, index (account.id)}
+	{#each accounts as account, index (account.id)}
 		<article class="flex flex-col border" aria-labelledby="account-{account.id}">
 			<div class="flex flex-wrap items-center gap-3 p-3">
 				<AccountSwatch color={account.color} class="size-3" />
@@ -51,31 +93,26 @@
 						{account.email} · {PROVIDER_LABELS[account.provider]}
 					</span>
 				</div>
-				<form method="POST" action="?/move" use:enhance class="flex">
-					<input type="hidden" name="id" value={account.id} />
+				<div class="flex">
 					<Button
-						type="submit"
-						name="direction"
-						value="up"
 						variant="ghost"
 						size="sm"
 						disabled={index === 0}
 						aria-label="Move {account.label} up"
+						onclick={() => moveAccount(account.id, 'up')}
 					>
 						<ArrowUp />
 					</Button>
 					<Button
-						type="submit"
-						name="direction"
-						value="down"
 						variant="ghost"
 						size="sm"
-						disabled={index === data.accounts.length - 1}
+						disabled={index === accounts.length - 1}
 						aria-label="Move {account.label} down"
+						onclick={() => moveAccount(account.id, 'down')}
 					>
 						<ArrowDown />
 					</Button>
-				</form>
+				</div>
 			</div>
 			{#if account.lastError}
 				<div class="flex flex-wrap items-center gap-2 border-t bg-muted px-3 py-2 text-sm">
@@ -98,8 +135,8 @@
 					class="grid gap-4 p-3 pt-1"
 					use:enhance={() =>
 						async ({ result, update }) => {
-							await update({ reset: false });
 							if (result.type === 'success') toast.success('Account saved');
+							await update({ reset: false });
 						}}
 				>
 					<input type="hidden" name="id" value={account.id} />
@@ -176,10 +213,6 @@
 	{/each}
 </section>
 
-<form bind:this={removeForm} method="POST" action="?/delete" class="hidden" use:enhance>
-	<input type="hidden" name="id" value={removing?.id ?? ''} />
-</form>
-
 <AlertDialog.Root
 	open={removing !== null}
 	onOpenChange={(open) => {
@@ -199,7 +232,7 @@
 			<AlertDialog.Action
 				class="bg-destructive text-white hover:bg-destructive/90"
 				onclick={() => {
-					removeForm?.requestSubmit();
+					if (removing) removeAccount(removing.id);
 					removing = null;
 				}}>Remove</AlertDialog.Action
 			>

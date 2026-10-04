@@ -1,15 +1,33 @@
 <script lang="ts">
+	import { SvelteSet } from 'svelte/reactivity';
 	import { enhance } from '$app/forms';
+	import { invalidateAll } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { toast } from 'svelte-sonner';
 	import AccessGrantFields from '#lib/components/access-grant-fields.svelte';
 	import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
+	import { postAction } from '#lib/form-action.js';
 
 	let { data } = $props();
 
 	let revoking = $state<{ clientId: string; name: string } | null>(null);
-	let revokeForm = $state<HTMLFormElement | null>(null);
+	// A revoked app disappears at once; revoking finishes in the background.
+	const revoked = new SvelteSet<string>();
+	const apps = $derived(data.apps.filter((app) => !revoked.has(app.clientId)));
 	const longDate = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
+
+	async function revoke(clientId: string) {
+		revoked.add(clientId);
+		const error = await postAction(`${resolve('/(app)/settings/connected-apps')}?/revoke`, {
+			clientId
+		});
+		if (error) {
+			revoked.delete(clientId);
+			toast.error(error);
+		}
+		await invalidateAll();
+	}
 </script>
 
 <svelte:head><title>Connected apps · Mail</title></svelte:head>
@@ -23,15 +41,15 @@
 		</p>
 	</div>
 
-	{#each data.apps as app (app.clientId)}
+	{#each apps as app (app.clientId)}
 		<form
 			method="POST"
 			action="?/save"
 			class="flex flex-col gap-3 border p-4"
 			use:enhance={() =>
 				async ({ result, update }) => {
-					await update({ reset: false });
 					if (result.type === 'success') toast.success(`Saved access for ${app.name}`);
+					await update({ reset: false });
 				}}
 		>
 			<input type="hidden" name="clientId" value={app.clientId} />
@@ -70,20 +88,6 @@
 	{/each}
 </section>
 
-<form
-	bind:this={revokeForm}
-	method="POST"
-	action="?/revoke"
-	class="hidden"
-	use:enhance={() =>
-		async ({ result, update }) => {
-			await update();
-			if (result.type === 'success') toast.success('Access revoked');
-		}}
->
-	<input type="hidden" name="clientId" value={revoking?.clientId ?? ''} />
-</form>
-
 <AlertDialog.Root
 	open={revoking !== null}
 	onOpenChange={(open) => {
@@ -102,7 +106,7 @@
 			<AlertDialog.Action
 				class="bg-destructive text-white hover:bg-destructive/90"
 				onclick={() => {
-					revokeForm?.requestSubmit();
+					if (revoking) revoke(revoking.clientId);
 					revoking = null;
 				}}>Revoke</AlertDialog.Action
 			>
