@@ -45,7 +45,7 @@
 		<form
 			method="POST"
 			action="?/save"
-			class="flex flex-col gap-3 rounded-lg border p-4"
+			class="flex flex-col gap-3 border p-4"
 			use:enhance={() =>
 				async ({ result, update }) => {
 					if (result.type === 'success') toast.success(`Saved access for ${app.name}`);
@@ -78,7 +78,7 @@
 			</div>
 		</form>
 	{:else}
-		<div class="flex flex-col gap-2 rounded-lg border p-4 text-sm">
+		<div class="flex flex-col gap-2 border p-4 text-sm">
 			<p class="font-medium">No apps connected yet</p>
 			<p class="text-muted-foreground">
 				Add this server's <code class="text-foreground">/mcp</code> URL as a remote MCP server in Claude,

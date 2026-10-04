@@ -21,7 +21,7 @@
 					class={[
 						'-mb-px border-b-2 px-3 py-2 text-sm',
 						active
-							? 'border-primary font-medium text-foreground'
+							? 'border-foreground font-medium'
 							: 'border-transparent text-muted-foreground hover:text-foreground'
 					]}>{tab.label}</a
 				>

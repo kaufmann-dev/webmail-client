@@ -13,11 +13,10 @@
 		].join('; ')
 	);
 
-	const BASE_STYLE = `html,body{margin:0;background:#fff;color:#1f2328}
-body{padding:20px;font:15px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif;overflow-wrap:anywhere}
-body>:first-child{margin-top:0}body>:last-child{margin-bottom:0}
-img{max-width:100%;height:auto}pre{white-space:pre-wrap}a{color:#1d5fd1}
-blockquote{margin:0 0 0 .5em;padding-left:.75em;border-left:3px solid #d0d7de;color:#57606a}`;
+	const BASE_STYLE = `html,body{margin:0;background:#fff;color:#111}
+body{padding:16px;font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;overflow-wrap:anywhere}
+img{max-width:100%;height:auto}pre{white-space:pre-wrap}
+blockquote{margin:0 0 0 .5em;padding-left:.75em;border-left:2px solid #ccc}`;
 
 	const srcdoc = $derived(
 		`<!doctype html><html><head><meta charset="utf-8">` +
@@ -45,5 +44,5 @@ blockquote{margin:0 0 0 .5em;padding-left:.75em;border-left:3px solid #d0d7de;co
 	sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
 	{srcdoc}
 	onload={fit}
-	class="block min-h-24 w-full rounded-lg border bg-white"
+	class="block min-h-24 w-full border bg-white"
 ></iframe>
