@@ -5,6 +5,7 @@
 	import { resolve } from '$app/paths';
 	import { toast } from 'svelte-sonner';
 	import AccessGrantFields from '#lib/components/access-grant-fields.svelte';
+	import CopyField from '#lib/components/copy-field.svelte';
 	import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { postAction } from '#lib/form-action.js';
@@ -16,6 +17,8 @@
 	const revoked = new SvelteSet<string>();
 	const apps = $derived(data.apps.filter((app) => !revoked.has(app.clientId)));
 	const longDate = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
+	const claudeCode = $derived(`claude mcp add --transport http mail ${data.mcpUrl}`);
+	const codex = $derived(`codex mcp add mail --url ${data.mcpUrl}`);
 
 	async function revoke(clientId: string) {
 		revoked.add(clientId);
@@ -32,12 +35,53 @@
 
 <svelte:head><title>Connected apps · Mail</title></svelte:head>
 
-<section class="flex flex-col gap-4">
+<section class="flex flex-col gap-4" aria-labelledby="connect">
 	<div class="flex flex-col gap-1">
-		<h1 class="text-xl font-semibold">Connected apps</h1>
+		<h1 id="connect" class="text-xl font-semibold">Connect an app</h1>
 		<p class="text-sm text-muted-foreground">
-			AI apps connected to the MCP server at <code class="text-foreground">/mcp</code>. Each app can
-			only use the mail accounts you allow here. Changes apply to its next request.
+			Add this URL as a remote MCP server (Streamable HTTP). The app opens a browser window where
+			you sign in with Pocket ID and choose the mail accounts it may use. No API key is needed.
+		</p>
+	</div>
+	<CopyField value={data.mcpUrl} label="MCP URL" />
+	<dl class="flex flex-col gap-4 text-sm">
+		<div class="flex flex-col gap-2">
+			<dt class="font-medium">Claude Code</dt>
+			<dd class="flex flex-col gap-2">
+				<CopyField value={claudeCode} label="Claude Code command" />
+				<span class="text-muted-foreground"
+					>Then run <code>/mcp</code> and choose Authenticate.</span
+				>
+			</dd>
+		</div>
+		<div class="flex flex-col gap-2">
+			<dt class="font-medium">Codex</dt>
+			<dd class="flex flex-col gap-2">
+				<CopyField value={codex} label="Codex command" />
+				<span class="text-muted-foreground">Then run <code>codex mcp login mail</code>.</span>
+			</dd>
+		</div>
+		<div class="flex flex-col gap-1">
+			<dt class="font-medium">Claude (web and desktop)</dt>
+			<dd class="text-muted-foreground">
+				Settings → Connectors → Add custom connector, then paste the MCP URL.
+			</dd>
+		</div>
+		<div class="flex flex-col gap-1">
+			<dt class="font-medium">ChatGPT</dt>
+			<dd class="text-muted-foreground">
+				Settings → Apps &amp; Connectors → Advanced settings → enable Developer mode, then create a
+				connector with the MCP URL and OAuth authentication.
+			</dd>
+		</div>
+	</dl>
+</section>
+
+<section class="flex flex-col gap-4" aria-labelledby="apps">
+	<div class="flex flex-col gap-1">
+		<h2 id="apps" class="text-xl font-semibold">Connected apps</h2>
+		<p class="text-sm text-muted-foreground">
+			Each app can only use the mail accounts you allow here. Changes apply to its next request.
 		</p>
 	</div>
 
@@ -80,10 +124,7 @@
 	{:else}
 		<div class="flex flex-col gap-2 rounded-lg border p-4 text-sm">
 			<p class="font-medium">No apps connected yet</p>
-			<p class="text-muted-foreground">
-				Add this server's <code class="text-foreground">/mcp</code> URL as a remote MCP server in Claude,
-				ChatGPT, or another MCP client. You choose the accounts it may use when you approve it.
-			</p>
+			<p class="text-muted-foreground">Connect one with the steps above.</p>
 		</div>
 	{/each}
 </section>

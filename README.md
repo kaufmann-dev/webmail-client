@@ -95,7 +95,8 @@ claude mcp add --transport http mail https://mail.kaufmann.dev/mcp   # then /mcp
 codex mcp add mail --url https://mail.kaufmann.dev/mcp && codex mcp login mail
 ```
 
-In Claude or ChatGPT on the web, add the same URL as a custom connector.
+In Claude or ChatGPT on the web, add the same URL as a custom connector. Settings → Connected apps
+shows these steps with copyable commands for the deployed URL.
 
 - **Consent:** after you sign in with Pocket ID, the consent screen lists your mail accounts. For
   each one, choose No access, **Read only**, **Read & organize** (flags, moving, archiving, trash,
