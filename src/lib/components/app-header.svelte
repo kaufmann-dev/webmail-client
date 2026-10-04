@@ -4,6 +4,7 @@
 	import { toggleMode } from 'mode-watcher';
 	import CircleUser from '@lucide/svelte/icons/circle-user';
 	import LogOut from '@lucide/svelte/icons/log-out';
+	import Mail from '@lucide/svelte/icons/mail';
 	import PenSquare from '@lucide/svelte/icons/pen-square';
 	import SunMoon from '@lucide/svelte/icons/sun-moon';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -30,7 +31,14 @@
 
 <header class="border-b">
 	<div class="mx-auto flex h-14 max-w-[1600px] items-center gap-2 px-4 sm:gap-6">
-		<a href={links[0].href} class="hidden font-semibold sm:block">Mail</a>
+		<a href={links[0].href} class="hidden items-center gap-2 font-semibold sm:flex">
+			<span
+				class="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground"
+			>
+				<Mail class="size-4" aria-hidden="true" />
+			</span>
+			Mail
+		</a>
 		<nav class="flex min-w-0 flex-1 items-center gap-1" aria-label="Main">
 			{#each links as link (link.match)}
 				{@const active = page.url.pathname.startsWith(link.match)}
@@ -38,8 +46,10 @@
 					href={link.href}
 					aria-current={active ? 'page' : undefined}
 					class={[
-						'px-2 py-1 text-sm whitespace-nowrap',
-						active ? 'font-medium' : 'text-muted-foreground hover:text-foreground'
+						'rounded-md px-3 py-1.5 text-sm whitespace-nowrap',
+						active
+							? 'bg-accent font-medium text-accent-foreground'
+							: 'text-muted-foreground hover:bg-muted hover:text-foreground'
 					]}
 				>
 					{link.label}

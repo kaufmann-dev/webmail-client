@@ -5,6 +5,7 @@
 	import Download from '@lucide/svelte/icons/download';
 	import FolderInput from '@lucide/svelte/icons/folder-input';
 	import Forward from '@lucide/svelte/icons/forward';
+	import ImageOff from '@lucide/svelte/icons/image-off';
 	import Inbox from '@lucide/svelte/icons/inbox';
 	import Mail from '@lucide/svelte/icons/mail';
 	import Reply from '@lucide/svelte/icons/reply';
@@ -63,6 +64,7 @@
 		`${resolve('/(app)/compose')}?${new URLSearchParams(params)}`;
 
 	const moveTargets = $derived(folders.filter((f) => f.role !== 'drafts'));
+	const initial = $derived(senderName(message.from).trim().charAt(0).toUpperCase() || '?');
 
 	async function loadThread() {
 		threadState = 'loading';
@@ -130,7 +132,7 @@
 			aria-pressed={message.starred}
 			onclick={() => onaction('flag', { flagged: String(!message.starred) })}
 		>
-			<Star class={message.starred ? 'fill-current' : ''} />
+			<Star class={message.starred ? 'fill-star text-star' : ''} />
 			<span class="sr-only">{message.starred ? 'Unstar' : 'Star'}</span>
 		</Button>
 		<DropdownMenu.Root>
@@ -189,124 +191,139 @@
 		{/if}
 	</div>
 
-	<div class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
-		<header class="flex flex-col gap-2">
-			<h1 class="text-xl font-semibold break-words">{message.subject || '(no subject)'}</h1>
-			<div class="flex flex-wrap items-start justify-between gap-x-4 gap-y-1 text-sm">
-				<div class="flex min-w-0 flex-col gap-0.5">
-					<span class="font-medium break-words">
-						{senderName(message.from)}
-						{#if message.from?.name}
-							<span class="font-normal text-muted-foreground">&lt;{message.from.address}&gt;</span>
-						{/if}
-					</span>
-					{#if message.to.length}
-						<span class="break-words text-muted-foreground"
-							>To: {message.to.map(formatAddress).join(', ')}</span
-						>
-					{/if}
-					{#if detail?.cc.length}
-						<span class="break-words text-muted-foreground"
-							>Cc: {detail.cc.map(formatAddress).join(', ')}</span
-						>
-					{/if}
-					{#if detail?.bcc.length}
-						<span class="break-words text-muted-foreground"
-							>Bcc: {detail.bcc.map(formatAddress).join(', ')}</span
-						>
-					{/if}
-				</div>
-				<div class="flex flex-col items-end gap-0.5 text-muted-foreground">
-					<time datetime={message.date}>{longDate(message.date)}</time>
-					{#if account}
-						<span class="flex items-center gap-1">
-							<AccountSwatch color={account.color} />
-							{account.label}
-						</span>
-					{/if}
-				</div>
-			</div>
-		</header>
-
-		{#if detail}
-			{#if detail.hasRemoteImages && !allowRemote}
-				<div class="flex flex-wrap items-center gap-2 border p-2 text-sm">
-					<span class="flex-1">Remote images are blocked to keep senders from tracking you.</span>
-					<Button variant="outline" size="sm" onclick={() => (allowRemote = true)}
-						>Load images</Button
+	<div class="min-h-0 flex-1 overflow-y-auto">
+		<div class="mx-auto flex w-full max-w-4xl flex-col gap-5 p-4 lg:p-6">
+			<header class="flex flex-col gap-4">
+				<h1 class="text-xl leading-snug font-semibold break-words">
+					{message.subject || '(no subject)'}
+				</h1>
+				<div class="flex items-start gap-3 text-sm">
+					<span
+						class="flex size-9 shrink-0 items-center justify-center rounded-full bg-accent font-semibold text-accent-foreground"
+						aria-hidden="true">{initial}</span
 					>
+					<div class="flex min-w-0 flex-1 flex-wrap items-start justify-between gap-x-4 gap-y-1">
+						<div class="flex min-w-0 flex-col gap-0.5">
+							<span class="font-semibold break-words">
+								{senderName(message.from)}
+								{#if message.from?.name}
+									<span class="font-normal text-muted-foreground"
+										>&lt;{message.from.address}&gt;</span
+									>
+								{/if}
+							</span>
+							{#if message.to.length}
+								<span class="break-words text-muted-foreground"
+									>To: {message.to.map(formatAddress).join(', ')}</span
+								>
+							{/if}
+							{#if detail?.cc.length}
+								<span class="break-words text-muted-foreground"
+									>Cc: {detail.cc.map(formatAddress).join(', ')}</span
+								>
+							{/if}
+							{#if detail?.bcc.length}
+								<span class="break-words text-muted-foreground"
+									>Bcc: {detail.bcc.map(formatAddress).join(', ')}</span
+								>
+							{/if}
+						</div>
+						<div class="flex flex-col gap-0.5 text-muted-foreground sm:items-end">
+							<time datetime={message.date}>{longDate(message.date)}</time>
+							{#if account}
+								<span class="flex items-center gap-1.5">
+									<AccountSwatch color={account.color} />
+									{account.label}
+								</span>
+							{/if}
+						</div>
+					</div>
 				</div>
-			{/if}
+			</header>
 
-			<MessageBody html={detail.html} {allowRemote} />
-
-			{#if detail.attachments.length}
-				<section aria-labelledby="attachments-heading" class="flex flex-col gap-2">
-					<h2 id="attachments-heading" class="text-sm font-medium">
-						{detail.attachments.length} attachment{detail.attachments.length === 1 ? '' : 's'}
-					</h2>
-					<ul class="flex flex-wrap gap-2">
-						{#each detail.attachments as attachment (attachment.partId)}
-							<li>
-								<a
-									href="/api/messages/{message.ref}/attachments/{attachment.partId}"
-									download={attachment.filename}
-									class="flex max-w-72 items-center gap-2 border px-3 py-2 text-sm hover:bg-accent"
-								>
-									<Download class="size-4 shrink-0" />
-									<span class="min-w-0 truncate">{attachment.filename}</span>
-									<span class="shrink-0 text-xs text-muted-foreground"
-										>{fileSize(attachment.size)}</span
-									>
-								</a>
-							</li>
-						{/each}
-					</ul>
-				</section>
-			{/if}
-
-			<section aria-label="Conversation" class="flex flex-col gap-2 border-t pt-4">
-				{#if thread}
-					<h2 class="text-sm font-medium">Conversation ({thread.length})</h2>
-					<ol class="flex flex-col">
-						{#each thread as item (item.ref)}
-							<li>
-								<a
-									href={hrefFor(item.ref)}
-									class={[
-										'flex min-w-0 items-center gap-2 px-2 py-1.5 text-sm hover:bg-accent',
-										item.messageId === message.messageId && 'font-medium'
-									]}
-								>
-									<span class="min-w-0 flex-1 truncate"
-										>{senderName(item.from)}: {item.subject}</span
-									>
-									<time datetime={item.date} class="shrink-0 text-xs text-muted-foreground">
-										{longDate(item.date)}
-									</time>
-								</a>
-							</li>
-						{/each}
-					</ol>
-				{:else}
-					<div class="flex items-center gap-2">
-						<Button
-							variant="outline"
-							size="sm"
-							onclick={loadThread}
-							disabled={threadState === 'loading'}
+			{#if detail}
+				{#if detail.hasRemoteImages && !allowRemote}
+					<div class="flex flex-wrap items-center gap-2 rounded-md bg-muted px-3 py-2 text-sm">
+						<ImageOff class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+						<span class="flex-1">Remote images are blocked to keep senders from tracking you.</span>
+						<Button variant="outline" size="sm" onclick={() => (allowRemote = true)}
+							>Load images</Button
 						>
-							{#if threadState === 'loading'}<Spinner aria-label="Loading conversation" />{/if}
-							Show conversation
-						</Button>
-						{#if threadState === 'error'}
-							<span class="text-sm text-destructive">The conversation could not be loaded.</span>
-						{/if}
 					</div>
 				{/if}
-			</section>
-		{:else}
-			<Spinner aria-label="Loading message" class="mx-auto" />
-		{/if}
+
+				<MessageBody html={detail.html} {allowRemote} />
+
+				{#if detail.attachments.length}
+					<section aria-labelledby="attachments-heading" class="flex flex-col gap-2">
+						<h2 id="attachments-heading" class="text-sm font-medium">
+							{detail.attachments.length} attachment{detail.attachments.length === 1 ? '' : 's'}
+						</h2>
+						<ul class="flex flex-wrap gap-2">
+							{#each detail.attachments as attachment (attachment.partId)}
+								<li>
+									<a
+										href="/api/messages/{message.ref}/attachments/{attachment.partId}"
+										download={attachment.filename}
+										class="flex max-w-72 items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-muted"
+									>
+										<Download class="size-4 shrink-0" />
+										<span class="min-w-0 truncate">{attachment.filename}</span>
+										<span class="shrink-0 text-xs text-muted-foreground"
+											>{fileSize(attachment.size)}</span
+										>
+									</a>
+								</li>
+							{/each}
+						</ul>
+					</section>
+				{/if}
+
+				<section aria-label="Conversation" class="flex flex-col gap-2 border-t pt-4">
+					{#if thread}
+						<h2 class="text-sm font-medium">Conversation ({thread.length})</h2>
+						<ol class="flex flex-col">
+							{#each thread as item (item.ref)}
+								<li>
+									<a
+										href={hrefFor(item.ref)}
+										class={[
+											'flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-sm',
+											item.messageId === message.messageId
+												? 'bg-accent font-medium text-accent-foreground'
+												: 'hover:bg-muted'
+										]}
+									>
+										<span class="min-w-0 flex-1 truncate"
+											>{senderName(item.from)}: {item.subject}</span
+										>
+										<time datetime={item.date} class="shrink-0 text-xs text-muted-foreground">
+											{longDate(item.date)}
+										</time>
+									</a>
+								</li>
+							{/each}
+						</ol>
+					{:else}
+						<div class="flex items-center gap-2">
+							<Button
+								variant="outline"
+								size="sm"
+								onclick={loadThread}
+								disabled={threadState === 'loading'}
+							>
+								{#if threadState === 'loading'}<Spinner aria-label="Loading conversation" />{/if}
+								Show conversation
+							</Button>
+							{#if threadState === 'error'}
+								<span class="text-sm text-destructive">The conversation could not be loaded.</span>
+							{/if}
+						</div>
+					{/if}
+				</section>
+			{:else}
+				<Spinner aria-label="Loading message" class="mx-auto" />
+			{/if}
+		</div>
 	</div>
 </article>
