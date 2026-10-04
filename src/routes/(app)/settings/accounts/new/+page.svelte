@@ -34,7 +34,7 @@
 			{#each ['gmail', 'purelymail', 'microsoft'] as const as option (option)}
 				<label
 					class={[
-						'flex cursor-pointer items-center gap-2 border px-3 py-2 text-sm',
+						'flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm',
 						provider === option ? 'border-foreground font-medium' : 'hover:bg-accent'
 					]}
 				>

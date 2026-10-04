@@ -230,7 +230,7 @@
 
 		{#if detail}
 			{#if detail.hasRemoteImages && !allowRemote}
-				<div class="flex flex-wrap items-center gap-2 border p-2 text-sm">
+				<div class="flex flex-wrap items-center gap-2 rounded-md border p-2 text-sm">
 					<span class="flex-1">Remote images are blocked to keep senders from tracking you.</span>
 					<Button variant="outline" size="sm" onclick={() => (allowRemote = true)}
 						>Load images</Button
@@ -251,7 +251,7 @@
 								<a
 									href="/api/messages/{message.ref}/attachments/{attachment.partId}"
 									download={attachment.filename}
-									class="flex max-w-72 items-center gap-2 border px-3 py-2 text-sm hover:bg-accent"
+									class="flex max-w-72 items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-accent"
 								>
 									<Download class="size-4 shrink-0" />
 									<span class="min-w-0 truncate">{attachment.filename}</span>
@@ -274,7 +274,7 @@
 								<a
 									href={hrefFor(item.ref)}
 									class={[
-										'flex min-w-0 items-center gap-2 px-2 py-1.5 text-sm hover:bg-accent',
+										'flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent',
 										item.messageId === message.messageId && 'font-medium'
 									]}
 								>
