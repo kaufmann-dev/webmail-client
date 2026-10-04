@@ -400,7 +400,7 @@
 {#snippet reader(message: MessageSummary | MessageDetail)}
 	<MessageReader
 		{message}
-		account={accountsById.get(message.accountId)}
+		account={data.scope === 'all' ? accountsById.get(message.accountId) : undefined}
 		destinations={moveDestinations(data.folders, new Set([message.accountId]), view)}
 		{role}
 		{closeHref}
