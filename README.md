@@ -9,10 +9,12 @@ A private webmail client for Gmail, Purelymail, and Microsoft 365 accounts, serv
 The same server hosts a remote MCP server. AI apps such as Claude or ChatGPT connect to it once,
 and on the consent screen you choose which mail accounts each app may use and at what level.
 
-- **Mail:** a unified inbox (and Drafts, Sent, Archive, Spam, Trash) across accounts, per-account
-  folders, search (Gmail search syntax for Gmail), unread and starred filters, multi-select actions,
-  moving messages by dragging them onto a folder, keyboard shortcuts (`?` lists them), and a
-  conversation view.
+- **Mail:** an account switcher at the top of the sidebar picks "All accounts" (a unified Inbox,
+  Drafts, Sent, Archive, Spam, and Trash) or one address, and the sidebar then lists only that
+  view's folders. Switching keeps the kind of folder you are in, and `0`–`9` switch from the
+  keyboard. Also search (Gmail search syntax for Gmail), unread and starred filters, multi-select
+  actions, moving messages by dragging them onto a folder, keyboard shortcuts (`?` lists them),
+  and a conversation view.
 - **Reading:** HTML mail renders in a sandboxed frame with no scripts. Remote images stay blocked
   until you load them.
 - **Writing:** reply, reply all, forward (attachments included), drafts, attachments, and a
