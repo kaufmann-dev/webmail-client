@@ -22,7 +22,7 @@
 	} = $props();
 </script>
 
-<div class="flex flex-col divide-y rounded-lg border">
+<div class="flex flex-col divide-y border">
 	{#each accounts as account (account.id)}
 		<div class="flex flex-wrap items-center gap-x-4 gap-y-2 p-3">
 			<label for="{idPrefix}-{account.id}" class="flex min-w-0 flex-1 basis-48 items-center gap-2">

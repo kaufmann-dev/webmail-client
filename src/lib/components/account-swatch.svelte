@@ -6,6 +6,6 @@
 
 <span
 	aria-hidden="true"
-	class={['inline-block size-2.5 shrink-0 rounded-[3px]', className]}
+	class={['inline-block size-2.5 shrink-0', className]}
 	style:background="var(--account-{color})"
 ></span>

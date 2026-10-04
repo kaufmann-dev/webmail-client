@@ -68,11 +68,9 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
 
 ## UI
 
-- Theme tokens live in `src/routes/layout.css`. Color is functional: `primary` (blue) marks
-  actions, the current location, and unread mail; `star` (amber) marks starred mail; `destructive`
-  marks errors and deletion; account colors (`--account-*`) appear only next to the account label.
-- No transitions or decorative animation (enforced in `layout.css`), so every state change shows at
-  once; spinners are the exception.
+- Follow the flat, square, motionless defaults enforced in `src/routes/layout.css`. Pure
+  `#ffffff` and `#000000` backgrounds.
+- Color appears only as account colors (`--account-*`), always next to the account label.
 - User actions show their result at once and finish in the background (`postAction` in
   `src/lib/form-action.ts`); a failure undoes the change and shows a toast. Sending continues after
   the editor closes (`src/lib/outbox.ts`).
