@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { deserialize } from '$app/forms';
-	import { goto, invalidate } from '$app/navigation';
+	import { afterNavigate, goto, invalidate } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { navigating, page } from '$app/state';
 	import { toast } from 'svelte-sonner';
@@ -25,14 +24,22 @@
 	import { Kbd } from '#lib/components/ui/kbd/index.js';
 	import * as Sheet from '#lib/components/ui/sheet/index.js';
 	import { Spinner } from '#lib/components/ui/spinner/index.js';
+	import { postAction } from '#lib/form-action.js';
 	import {
 		FOLDER_ROLE_LABELS,
 		isFolderRole,
 		LIST_FILTERS,
-		type MessagePage
+		type MessageDetail,
+		type MessagePage,
+		type MessageSummary
 	} from '#lib/mail-types.js';
 
 	let { data } = $props();
+
+	// Held as stable references: opening a message replaces `data` but not these.
+	const list = $derived(data.list);
+	const serverUnread = $derived(data.unread);
+	const opened = $derived(data.message);
 
 	const accountsById = $derived(new Map(data.accounts.map((a) => [a.id, a])));
 	const role = $derived(
@@ -48,11 +55,21 @@
 		return `${folderName} · ${scopeName ?? ''}`;
 	});
 
+	// While another folder or filter loads, it is highlighted already.
+	const target = $derived(navigating.to?.route.id === page.route.id ? navigating.to : null);
+	const activeScope = $derived(target?.params?.scope ?? data.scope);
+	const activeFolder = $derived(target ? target.params?.folder || 'inbox' : data.folder);
+	const activeFilter = $derived.by(() => {
+		if (!target) return data.filter;
+		const filter = target.url.searchParams.get('filter');
+		return LIST_FILTERS.find((f) => f === filter) ?? 'all';
+	});
+
 	// Reset whenever the server sends a fresh list; "Load more" appends locally.
-	let messages = $derived(data.list.messages);
-	let cursor = $derived(data.list.nextCursor);
+	let loaded = $derived(list.messages);
+	let cursor = $derived(list.nextCursor);
 	let selected = $derived.by(() => {
-		void data.list;
+		void list;
 		return new Set<string>();
 	});
 	let loadingMore = $state(false);
@@ -61,15 +78,87 @@
 	let confirmDelete = $state<string[] | null>(null);
 	let searchInput = $state<HTMLInputElement | null>(null);
 
+	type MailAction = 'flag' | 'move' | 'delete';
+	type Flags = Partial<Pick<MessageSummary, 'unread' | 'starred'>>;
+
+	interface Change {
+		refs: Set<string>;
+		remove: boolean;
+		flags: Flags;
+		/** Inbox unread count changes by account. */
+		unread: Record<string, number>;
+		/** `refreshes` when the server finished it; null while it runs. */
+		done: number | null;
+	}
+
+	/**
+	 * Actions show at once and run in the background. A finished change stays applied until data
+	 * requested after it finished arrives, so a refresh already on its way cannot undo it.
+	 */
+	let changes = $state.raw<Change[]>([]);
+	const refreshes = { count: 0 };
+	const listSerial = $derived.by(() => {
+		void list;
+		return refreshes.count;
+	});
+	const countsSerial = $derived.by(() => {
+		void serverUnread;
+		return refreshes.count;
+	});
+	const running = $derived(changes.filter((c) => c.done === null));
+	// The open message's detail is not reloaded, so its own changes stay until another opens.
+	let openChanges = $derived.by(() => {
+		void opened;
+		return [] as Change[];
+	});
+
+	function refresh(...ids: string[]) {
+		refreshes.count++;
+		for (const id of ids) invalidate(id);
+	}
+
+	function unsettled(serial: number) {
+		return changes.filter((c) => c.done === null || c.done >= serial);
+	}
+
+	function withFlags<T extends MessageSummary>(message: T, applied: Change[]): T {
+		let result = message;
+		for (const change of applied) {
+			if (change.refs.has(message.ref)) result = { ...result, ...change.flags };
+		}
+		return result;
+	}
+
+	const messages = $derived.by(() => {
+		const applied = unsettled(listSerial);
+		const gone = new Set(applied.filter((c) => c.remove).flatMap((c) => [...c.refs]));
+		return loaded.filter((m) => !gone.has(m.ref)).map((m) => withFlags(m, applied));
+	});
+
+	const unread = $derived.by(() => {
+		const counts = { ...serverUnread };
+		for (const change of unsettled(countsSerial)) {
+			for (const [id, delta] of Object.entries(change.unread)) {
+				const count = counts[id];
+				if (count != null) counts[id] = Math.max(0, count + delta);
+			}
+		}
+		return counts;
+	});
+
 	const openRef = $derived(page.url.searchParams.get('m'));
+	// A message being put away disappears before the navigation that closes it finishes.
+	let closing = $state<string | null>(null);
+	const shownRef = $derived(openRef === closing ? null : openRef);
+	const shownSummary = $derived(messages.find((m) => m.ref === shownRef));
 	const basePath = $derived(
 		resolve('/(app)/mail/[scope]/[...folder]', { scope: data.scope, folder: data.folder })
 	);
 
-	function urlWith(changes: Record<string, string | null>): string {
+	function urlWith(updates: Record<string, string | null>): string {
 		const entries = Object.entries({
 			...Object.fromEntries(page.url.searchParams),
-			...changes
+			...updates
 		}).filter((entry): entry is [string, string] => entry[1] !== null);
 		const query = new URLSearchParams(entries).toString();
 		return query ? `${basePath}?${query}` : basePath;
@@ -80,6 +169,7 @@
 
 	async function loadMore() {
 		if (!cursor) return;
+		const base = list;
 		loadingMore = true;
 		const params = new URLSearchParams({
 			scope: data.scope,
@@ -92,7 +182,9 @@
 			const response = await fetch(`/api/messages?${params}`);
 			if (!response.ok) throw new Error(await response.text());
 			const next: MessagePage = await response.json();
-			messages = [...messages, ...next.messages];
+			// A fresh list arrived meanwhile and starts over from the newest messages.
+			if (list !== base) return;
+			loaded = [...loaded, ...next.messages];
 			cursor = next.nextCursor;
 			for (const failure of next.errors) toast.error(failure.message);
 		} catch {
@@ -102,34 +194,71 @@
 		}
 	}
 
-	async function act(
-		action: 'flag' | 'move' | 'delete',
-		refs: string[],
-		fields: Record<string, string> = {}
-	) {
+	/** Shows an action at once, runs it in the background, and undoes it if the server fails. */
+	async function act(action: MailAction, refs: string[], fields: Record<string, string> = {}) {
 		if (!refs.length) return;
-		const body = new FormData();
-		for (const ref of refs) body.append('ref', ref);
-		for (const [key, value] of Object.entries(fields)) body.set(key, value);
-		const response = await fetch(`?/${action}`, {
-			method: 'POST',
-			body,
-			headers: { 'x-sveltekit-action': 'true' }
-		});
-		const result = deserialize(await response.text());
-		if (result.type === 'failure') {
-			toast.error(String(result.data?.error ?? 'The action failed.'));
+		const targets = new Set(refs);
+		const remove = action !== 'flag';
+		const flags: Flags = {};
+		if (fields.seen) flags.unread = fields.seen === 'false';
+		if (fields.flagged) flags.starred = fields.flagged === 'true';
+		const unreadDelta: Record<string, number> = {};
+		if (role === 'inbox') {
+			for (const message of messages) {
+				if (!targets.has(message.ref)) continue;
+				const after = !remove && (flags.unread ?? message.unread);
+				if (after === message.unread) continue;
+				unreadDelta[message.accountId] = (unreadDelta[message.accountId] ?? 0) + (after ? 1 : -1);
+			}
+		}
+		const change: Change = { refs: targets, remove, flags, unread: unreadDelta, done: null };
+		const oldest = Math.min(listSerial, countsSerial);
+		changes = [...changes.filter((c) => c.done === null || c.done >= oldest), change];
+		if (remove) selected = new Set([...selected].filter((ref) => !targets.has(ref)));
+		if (shownRef && targets.has(shownRef)) {
+			if (!remove) openChanges = [...openChanges, change];
+			// Moving, deleting, or marking unread puts the open message away.
+			if (remove || flags.unread) {
+				closing = shownRef;
+				goto(closeHref, { replace: true, reset: false });
+			}
+		}
+
+		const error = await postAction(`${basePath}?/${action}`, { ...fields, ref: refs });
+		if (error) {
+			toast.error(error);
+			changes = changes.filter((c) => c !== change);
+			openChanges = openChanges.filter((c) => c !== change);
+			refresh('mail:list', 'mail:counts');
 			return;
 		}
-		if (result.type === 'error') {
-			toast.error('The action failed.');
-			return;
-		}
-		const closesReader =
-			openRef !== null && refs.includes(openRef) && (action !== 'flag' || fields.seen === 'false');
-		if (closesReader) await goto(closeHref, { replace: true, reset: false });
-		await Promise.all([invalidate('mail:list'), invalidate('mail:counts')]);
+		change.done = refreshes.count;
+		changes = [...changes];
+		if (remove) refresh('mail:list', 'mail:counts');
+		else refresh('mail:counts');
 	}
+
+	/** Opening a message marks it read, in the background like any other action. */
+	function markOpenedRead() {
+		const ref = openRef;
+		if (!ref) return;
+		const listed = messages.find((m) => m.ref === ref);
+		if (listed) {
+			if (listed.unread) act('flag', [ref], { seen: 'true' });
+			return;
+		}
+		opened?.then(
+			(result) => {
+				if (result.detail?.unread && openRef === ref) act('flag', [ref], { seen: 'true' });
+			},
+			() => {}
+		);
+	}
+
+	afterNavigate(() => {
+		closing = null;
+		markOpenedRead();
+	});
 
 	const selectedRefs = $derived([...selected]);
 	const allSelected = $derived(messages.length > 0 && selected.size === messages.length);
@@ -147,7 +276,7 @@
 		) {
 			return;
 		}
-		const current = messages.findIndex((m) => m.ref === openRef);
+		const current = messages.findIndex((m) => m.ref === shownRef);
 		const compose = (params: Record<string, string>) =>
 			goto(`${resolve('/(app)/compose')}?${new URLSearchParams(params)}`);
 		switch (event.key) {
@@ -167,22 +296,22 @@
 				shortcutsOpen = true;
 				break;
 			case 'r':
-				if (openRef) compose({ reply: openRef });
+				if (shownRef) compose({ reply: shownRef });
 				break;
 			case 'a':
-				if (openRef) compose({ reply: openRef, all: '1' });
+				if (shownRef) compose({ reply: shownRef, all: '1' });
 				break;
 			case 'f':
-				if (openRef) compose({ forward: openRef });
+				if (shownRef) compose({ forward: shownRef });
 				break;
 			case 'e':
-				if (openRef && role !== 'archive') act('move', [openRef], { target: 'archive' });
+				if (shownRef && role !== 'archive') act('move', [shownRef], { target: 'archive' });
 				break;
 			case '#':
-				if (openRef && role !== 'trash') act('move', [openRef], { target: 'trash' });
+				if (shownRef && role !== 'trash') act('move', [shownRef], { target: 'trash' });
 				break;
 			case 'u':
-				if (openRef) act('flag', [openRef], { seen: 'false' });
+				if (shownRef) act('flag', [shownRef], { seen: 'false' });
 				break;
 			default:
 				return;
@@ -192,17 +321,14 @@
 
 	onMount(() => {
 		// New mail: refresh while the tab is visible, and when it regains focus.
-		const refresh = () => {
-			if (document.visibilityState === 'visible') {
-				invalidate('mail:list');
-				invalidate('mail:counts');
-			}
+		const onRefresh = () => {
+			if (document.visibilityState === 'visible') refresh('mail:list', 'mail:counts');
 		};
-		const timer = setInterval(refresh, 60_000);
-		window.addEventListener('focus', refresh);
+		const timer = setInterval(onRefresh, 60_000);
+		window.addEventListener('focus', onRefresh);
 		return () => {
 			clearInterval(timer);
-			window.removeEventListener('focus', refresh);
+			window.removeEventListener('focus', onRefresh);
 		};
 	});
 
@@ -227,11 +353,31 @@
 	<MailSidebar
 		accounts={data.accounts}
 		folders={data.folders}
-		unread={data.unread}
-		scope={data.scope}
-		folder={data.folder}
+		{unread}
+		scope={activeScope}
+		folder={activeFolder}
 		{onnavigate}
 	/>
+{/snippet}
+
+{#snippet reader(message: MessageSummary | MessageDetail)}
+	<MessageReader
+		{message}
+		account={accountsById.get(message.accountId)}
+		folders={data.folders[message.accountId] ?? []}
+		{role}
+		{closeHref}
+		{hrefFor}
+		onaction={(action, fields) => act(action, [message.ref], fields)}
+		ondeleteforever={() => (confirmDelete = [message.ref])}
+	/>
+{/snippet}
+
+{#snippet unavailable(error: string)}
+	<div class="flex flex-col items-start gap-3 p-6">
+		<p class="text-sm wrap-anywhere">{error}</p>
+		<Button href={closeHref} variant="outline" size="sm">Back to the list</Button>
+	</div>
 {/snippet}
 
 <div class="grid min-h-0 flex-1 lg:grid-cols-[14rem_minmax(20rem,26rem)_1fr]">
@@ -241,7 +387,7 @@
 
 	<section
 		aria-label="Message list"
-		class={['min-h-0 flex-col border-r', openRef ? 'hidden lg:flex' : 'flex']}
+		class={['min-h-0 flex-col border-r', shownRef ? 'hidden lg:flex' : 'flex']}
 	>
 		<div class="flex flex-col gap-2 border-b p-2">
 			<div class="flex items-center gap-2">
@@ -365,10 +511,10 @@
 						{#each LIST_FILTERS as filter (filter)}
 							<a
 								href={urlWith({ filter: filter === 'all' ? null : filter, m: null })}
-								aria-current={data.filter === filter ? 'page' : undefined}
+								aria-current={activeFilter === filter ? 'page' : undefined}
 								class={[
 									'px-2 py-1 capitalize',
-									data.filter === filter
+									activeFilter === filter
 										? 'bg-accent font-medium'
 										: 'text-muted-foreground hover:text-foreground'
 								]}>{filter}</a
@@ -405,7 +551,7 @@
 				<MessageList
 					{messages}
 					accounts={accountsById}
-					{openRef}
+					openRef={shownRef}
 					{selected}
 					onselectionchange={(next) => (selected = next)}
 					showAccount={data.scope === 'all'}
@@ -426,26 +572,27 @@
 
 	<section
 		aria-label="Reading pane"
-		class={['min-h-0 flex-col', openRef ? 'flex' : 'hidden lg:flex']}
+		class={['min-h-0 flex-col', shownRef ? 'flex' : 'hidden lg:flex']}
 	>
-		{#if data.message}
-			{#key data.message.ref}
-				<MessageReader
-					message={data.message}
-					account={accountsById.get(data.message.accountId)}
-					folders={data.folders[data.message.accountId] ?? []}
-					{role}
-					{closeHref}
-					{hrefFor}
-					onaction={(action, fields) => act(action, [data.message!.ref], fields)}
-					ondeleteforever={() => (confirmDelete = [data.message!.ref])}
-				/>
-			{/key}
-		{:else if data.messageError}
-			<div class="flex flex-col items-start gap-3 p-6">
-				<p class="text-sm wrap-anywhere">{data.messageError}</p>
-				<Button href={closeHref} variant="outline" size="sm">Back to the list</Button>
-			</div>
+		{#if shownRef && opened}
+			<!-- The listed summary stands in until the body arrives. -->
+			{#await opened}
+				{#if shownSummary}
+					{@render reader(shownSummary)}
+				{:else}
+					<Spinner aria-label="Loading message" class="m-auto" />
+				{/if}
+			{:then result}
+				{#if result.detail}
+					{#key result.detail.ref}
+						{@render reader(withFlags(result.detail, [...running, ...openChanges]))}
+					{/key}
+				{:else}
+					{@render unavailable(result.error)}
+				{/if}
+			{:catch}
+				{@render unavailable('The message could not be loaded.')}
+			{/await}
 		{:else}
 			<p class="m-auto p-6 text-sm text-muted-foreground">
 				Select a message to read it. Press <Kbd>?</Kbd> for keyboard shortcuts.

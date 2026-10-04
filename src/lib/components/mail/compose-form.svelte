@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { enhance, type SubmitFunction } from '$app/forms';
-	import { beforeNavigate, goto } from '$app/navigation';
+	import { enhance, type ActionResult, type SubmitFunction } from '$app/forms';
+	import { beforeNavigate, goto, invalidate } from '$app/navigation';
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	import { toast } from 'svelte-sonner';
 	import Paperclip from '@lucide/svelte/icons/paperclip';
 	import Send from '@lucide/svelte/icons/send';
@@ -18,20 +19,24 @@
 	import { Textarea } from '#lib/components/ui/textarea/index.js';
 	import { fileSize } from '#lib/format.js';
 	import type { AccountSummary, AttachmentInfo, ComposeState } from '#lib/mail-types.js';
+	import { followSend, takeUnsent } from '#lib/outbox.js';
 
 	let { initial: props, accounts }: { initial: ComposeState; accounts: AccountSummary[] } =
 		$props();
 
 	// The editor owns its state after loading; the page re-creates it for each new compose URL.
-	const initial = untrack(() => props);
+	// `?unsent=` reopens a message whose background send failed.
+	const unsent = takeUnsent(page.url.searchParams.get('unsent'));
+	const initial = unsent?.state ?? untrack(() => props);
 	let accountId = $state(initial.accountId);
 	let draftRef = $state(initial.replacesDraftRef);
 	let carriedRef = $state(initial.carriedRef);
 	let carried = $state<AttachmentInfo[]>(initial.carried);
-	let files = $state<File[]>([]);
+	let files = $state<File[]>(unsent?.files ?? []);
 	let showCopies = $state(Boolean(initial.cc || initial.bcc));
-	let dirty = $state(false);
-	let pending = $state<'send' | 'save' | 'discard' | null>(null);
+	let dirty = $state(Boolean(unsent));
+	// Sending and discarding close the editor, which stays until the page behind it has loaded.
+	let pending = $state<'save' | 'close' | null>(null);
 	let error = $state<string | null>(null);
 	let confirmDiscard = $state(false);
 	let fileInput = $state<HTMLInputElement | null>(null);
@@ -60,44 +65,75 @@
 		dirty = true;
 	}
 
+	function failure(result: ActionResult): string {
+		if (result.type === 'failure') return String(result.data?.error ?? 'Something went wrong.');
+		if (result.type === 'error') return result.error?.message ?? 'Something went wrong.';
+		return 'Something went wrong.';
+	}
+
 	const submit: SubmitFunction = ({ formData, action, cancel }) => {
+		if (pending) {
+			cancel();
+			return;
+		}
 		const kind = action.search.includes('discard')
 			? 'discard'
 			: action.search.includes('save')
 				? 'save'
 				: 'send';
-		if (kind === 'send' && !String(formData.get('to') ?? '').trim()) {
+		const text = (name: string) => String(formData.get(name) ?? '');
+		if (kind === 'send' && !text('to').trim()) {
 			error = 'Add at least one recipient.';
 			cancel();
 			return;
 		}
 		formData.delete('files');
 		for (const file of files) formData.append('files', file);
-		pending = kind;
 		error = null;
-		return async ({ result }) => {
-			pending = null;
-			if (result.type === 'failure') {
-				error = String(result.data?.error ?? 'Something went wrong.');
-				return;
-			}
-			if (result.type === 'error') {
-				error = result.error?.message ?? 'Something went wrong.';
-				return;
-			}
-			if (result.type !== 'success') return;
-			if (kind === 'save' && result.data) {
+
+		if (kind === 'save') {
+			pending = 'save';
+			return async ({ result }) => {
+				pending = null;
+				if (result.type !== 'success' || !result.data) {
+					error = failure(result);
+					return;
+				}
 				draftRef = String(result.data.draftRef);
 				carriedRef = draftRef;
 				carried = result.data.carried as AttachmentInfo[];
 				files = [];
 				dirty = false;
 				toast.success('Draft saved');
-				return;
-			}
-			toast.success(kind === 'send' ? 'Message sent' : 'Draft discarded');
-			leave();
-		};
+			};
+		}
+
+		// Sending and discarding finish in the background; the editor closes right away.
+		pending = 'close';
+		leave();
+		if (kind === 'discard') {
+			toast.success('Draft discarded');
+			return async ({ result }) => {
+				if (result.type === 'success') invalidate('mail:list');
+				else toast.error(`The draft was not discarded: ${failure(result)}`);
+			};
+		}
+		const finish = followSend({
+			state: {
+				...initial,
+				accountId,
+				to: text('to'),
+				cc: text('cc'),
+				bcc: text('bcc'),
+				subject: text('subject'),
+				body: text('body'),
+				replacesDraftRef: draftRef,
+				carriedRef,
+				carried: $state.snapshot(carried)
+			},
+			files: [...files]
+		});
+		return async ({ result }) => finish(result.type === 'success' ? null : failure(result));
 	};
 </script>
 
@@ -259,7 +295,7 @@
 
 			<div class="flex flex-wrap items-center gap-2 border-t pt-4">
 				<Button type="submit" disabled={pending !== null}>
-					{#if pending === 'send'}<Spinner aria-label="Sending" />{:else}<Send />{/if}
+					<Send />
 					Send
 				</Button>
 				<Button type="submit" variant="outline" formaction="?/save" disabled={pending !== null}>

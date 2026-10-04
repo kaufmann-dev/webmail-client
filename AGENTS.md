@@ -71,3 +71,8 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
 - Follow the flat, square, motionless defaults enforced in `src/routes/layout.css`. Pure
   `#ffffff` and `#000000` backgrounds.
 - Color appears only as account colors (`--account-*`), always next to the account label.
+- User actions show their result at once and finish in the background (`postAction` in
+  `src/lib/form-action.ts`); a failure undoes the change and shows a toast. Sending continues after
+  the editor closes (`src/lib/outbox.ts`).
+- The open message streams from the page load, which must stay free of side effects because links
+  preload on hover. The page marks a message read once it is shown.
