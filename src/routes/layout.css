@@ -1,0 +1,133 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn-svelte/tailwind.css';
+@import '@fontsource-variable/inter';
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+	--background: #ffffff;
+	--foreground: oklch(0.145 0 0);
+	--card: #ffffff;
+	--card-foreground: oklch(0.145 0 0);
+	--popover: #ffffff;
+	--popover-foreground: oklch(0.145 0 0);
+	--primary: oklch(0.205 0 0);
+	--primary-foreground: oklch(0.985 0 0);
+	--secondary: oklch(0.97 0 0);
+	--secondary-foreground: oklch(0.205 0 0);
+	--muted: oklch(0.97 0 0);
+	--muted-foreground: oklch(0.5 0 0);
+	--accent: oklch(0.95 0 0);
+	--accent-foreground: oklch(0.205 0 0);
+	--destructive: oklch(0.577 0.245 27.325);
+	--border: oklch(0.9 0 0);
+	--input: oklch(0.85 0 0);
+	--ring: oklch(0.708 0 0);
+	--radius: 0rem;
+	/* Account identification colors; always shown next to the account label. */
+	--account-blue: oklch(0.55 0.2 260);
+	--account-green: oklch(0.55 0.15 150);
+	--account-orange: oklch(0.62 0.18 50);
+	--account-purple: oklch(0.52 0.2 300);
+	--account-red: oklch(0.55 0.22 25);
+	--account-teal: oklch(0.55 0.1 200);
+	--account-pink: oklch(0.58 0.2 350);
+	--account-gray: oklch(0.5 0 0);
+}
+
+.dark {
+	--background: #000000;
+	--foreground: oklch(0.985 0 0);
+	--card: #000000;
+	--card-foreground: oklch(0.985 0 0);
+	--popover: oklch(0.18 0 0);
+	--popover-foreground: oklch(0.985 0 0);
+	--primary: oklch(0.922 0 0);
+	--primary-foreground: oklch(0.205 0 0);
+	--secondary: oklch(0.269 0 0);
+	--secondary-foreground: oklch(0.985 0 0);
+	--muted: oklch(0.22 0 0);
+	--muted-foreground: oklch(0.72 0 0);
+	--accent: oklch(0.25 0 0);
+	--accent-foreground: oklch(0.985 0 0);
+	--destructive: oklch(0.704 0.191 22.216);
+	--border: oklch(1 0 0 / 15%);
+	--input: oklch(1 0 0 / 22%);
+	--ring: oklch(0.556 0 0);
+	--account-blue: oklch(0.72 0.15 260);
+	--account-green: oklch(0.75 0.15 150);
+	--account-orange: oklch(0.78 0.15 60);
+	--account-purple: oklch(0.72 0.15 300);
+	--account-red: oklch(0.7 0.18 25);
+	--account-teal: oklch(0.75 0.1 200);
+	--account-pink: oklch(0.75 0.15 350);
+	--account-gray: oklch(0.7 0 0);
+}
+
+@theme inline {
+	--font-sans: 'Inter Variable', sans-serif;
+	--color-ring: var(--ring);
+	--color-input: var(--input);
+	--color-border: var(--border);
+	--color-destructive: var(--destructive);
+	--color-accent-foreground: var(--accent-foreground);
+	--color-accent: var(--accent);
+	--color-muted-foreground: var(--muted-foreground);
+	--color-muted: var(--muted);
+	--color-secondary-foreground: var(--secondary-foreground);
+	--color-secondary: var(--secondary);
+	--color-primary-foreground: var(--primary-foreground);
+	--color-primary: var(--primary);
+	--color-popover-foreground: var(--popover-foreground);
+	--color-popover: var(--popover);
+	--color-card-foreground: var(--card-foreground);
+	--color-card: var(--card);
+	--color-foreground: var(--foreground);
+	--color-background: var(--background);
+	--radius-sm: calc(var(--radius) * 0.6);
+	--radius-md: calc(var(--radius) * 0.8);
+	--radius-lg: var(--radius);
+	--radius-xl: calc(var(--radius) * 1.4);
+	--radius-2xl: calc(var(--radius) * 1.8);
+	--radius-3xl: calc(var(--radius) * 2.2);
+	--radius-4xl: calc(var(--radius) * 2.6);
+}
+
+@layer base {
+	* {
+		@apply border-border outline-ring/50;
+	}
+	body {
+		@apply bg-background text-foreground;
+	}
+	html {
+		@apply font-sans;
+	}
+}
+
+/* Flat, square, motionless surfaces. Base-layer !important outranks component utilities. */
+@layer base {
+	*,
+	::before,
+	::after {
+		border-radius: 0 !important;
+		box-shadow: none !important;
+		transition: none !important;
+	}
+	*:not(.animate-spin) {
+		animation: none !important;
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.animate-spin {
+			animation: none !important;
+		}
+	}
+	:focus-visible {
+		outline: 2px solid var(--foreground) !important;
+		outline-offset: 2px;
+	}
+	.tabular {
+		font-variant-numeric: tabular-nums;
+	}
+}
