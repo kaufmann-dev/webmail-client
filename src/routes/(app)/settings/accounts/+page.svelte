@@ -84,7 +84,7 @@
 	{/if}
 
 	{#each accounts as account, index (account.id)}
-		<article class="flex flex-col border" aria-labelledby="account-{account.id}">
+		<article class="flex flex-col rounded-lg border" aria-labelledby="account-{account.id}">
 			<div class="flex flex-wrap items-center gap-3 p-3">
 				<AccountSwatch color={account.color} class="size-3" />
 				<div class="flex min-w-0 flex-1 flex-col">
@@ -115,7 +115,7 @@
 				</div>
 			</div>
 			{#if account.lastError}
-				<div class="flex flex-wrap items-center gap-2 border-t bg-muted px-3 py-2 text-sm">
+				<div class="flex flex-wrap items-center gap-2 border-t bg-destructive/10 px-3 py-2 text-sm">
 					<span class="min-w-0 flex-1 wrap-anywhere">{account.lastError}</span>
 					{#if account.provider === 'microsoft'}
 						<Button
@@ -128,7 +128,7 @@
 				</div>
 			{/if}
 			<details class="border-t">
-				<summary class="cursor-pointer px-3 py-2 text-sm">Edit</summary>
+				<summary class="cursor-pointer px-3 py-2 text-sm font-medium hover:bg-muted">Edit</summary>
 				<form
 					method="POST"
 					action="?/update"
@@ -206,7 +206,7 @@
 			</details>
 		</article>
 	{:else}
-		<div class="flex flex-col items-start gap-2 border p-4 text-sm">
+		<div class="flex flex-col items-start gap-2 rounded-lg border p-4 text-sm">
 			<p class="font-medium">No mail accounts yet</p>
 			<p class="text-muted-foreground">Add your Gmail, Purelymail, or Microsoft 365 accounts.</p>
 		</div>

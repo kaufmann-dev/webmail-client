@@ -380,14 +380,14 @@
 	</div>
 {/snippet}
 
-<div class="grid min-h-0 flex-1 lg:grid-cols-[14rem_minmax(20rem,26rem)_1fr]">
-	<aside class="hidden min-h-0 overflow-y-auto border-r lg:block">
+<div class="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[14rem_minmax(20rem,26rem)_minmax(0,1fr)]">
+	<aside class="hidden min-h-0 overflow-y-auto border-r bg-sidebar lg:block">
 		{@render sidebar()}
 	</aside>
 
 	<section
 		aria-label="Message list"
-		class={['min-h-0 flex-col border-r', shownRef ? 'hidden lg:flex' : 'flex']}
+		class={['min-h-0 flex-col lg:border-r', shownRef ? 'hidden lg:flex' : 'flex']}
 	>
 		<div class="flex flex-col gap-2 border-b p-2">
 			<div class="flex items-center gap-2">
@@ -400,25 +400,28 @@
 				>
 					<Menu />
 				</Button>
-				<h1 class="min-w-0 flex-1 truncate text-sm font-semibold">{title}</h1>
+				<h1 class="min-w-0 flex-1 truncate text-base font-semibold">{title}</h1>
 				{#if navigating.to}
 					<Spinner aria-label="Loading" />
 				{/if}
 			</div>
 			<form method="GET" action={basePath} class="flex gap-1" role="search">
 				{#if data.filter !== 'all'}<input type="hidden" name="filter" value={data.filter} />{/if}
-				<Input
-					bind:ref={searchInput}
-					type="search"
-					name="q"
-					value={data.query}
-					placeholder="Search this folder"
-					aria-label="Search this folder"
-					class="h-8"
-				/>
-				<Button type="submit" variant="outline" size="sm" aria-label="Search">
-					<Search />
-				</Button>
+				<div class="relative min-w-0 flex-1">
+					<Search
+						class="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
+						aria-hidden="true"
+					/>
+					<Input
+						bind:ref={searchInput}
+						type="search"
+						name="q"
+						value={data.query}
+						placeholder="Search this folder"
+						aria-label="Search this folder"
+						class="h-8 pl-8"
+					/>
+				</div>
 				{#if data.query}
 					<Button
 						href={urlWith({ q: null, m: null })}
@@ -440,7 +443,7 @@
 					disabled={!messages.length}
 				/>
 				{#if selected.size}
-					<span class="text-xs text-muted-foreground">{selected.size} selected</span>
+					<span class="text-xs font-medium">{selected.size} selected</span>
 					<div class="flex flex-wrap gap-0.5">
 						<Button
 							variant="ghost"
@@ -513,10 +516,10 @@
 								href={urlWith({ filter: filter === 'all' ? null : filter, m: null })}
 								aria-current={activeFilter === filter ? 'page' : undefined}
 								class={[
-									'px-2 py-1 capitalize',
+									'rounded-md px-2.5 py-1 capitalize',
 									activeFilter === filter
-										? 'bg-accent font-medium'
-										: 'text-muted-foreground hover:text-foreground'
+										? 'bg-accent font-medium text-accent-foreground'
+										: 'text-muted-foreground hover:bg-muted hover:text-foreground'
 								]}>{filter}</a
 							>
 						{/each}
@@ -594,15 +597,18 @@
 				{@render unavailable('The message could not be loaded.')}
 			{/await}
 		{:else}
-			<p class="m-auto p-6 text-sm text-muted-foreground">
-				Select a message to read it. Press <Kbd>?</Kbd> for keyboard shortcuts.
-			</p>
+			<div
+				class="m-auto flex flex-col items-center gap-3 p-6 text-center text-sm text-muted-foreground"
+			>
+				<MailOpen class="size-8" aria-hidden="true" />
+				<p>Select a message to read it.<br />Press <Kbd>?</Kbd> for keyboard shortcuts.</p>
+			</div>
 		{/if}
 	</section>
 </div>
 
 <Sheet.Root bind:open={sidebarOpen}>
-	<Sheet.Content side="left" class="w-72 overflow-y-auto p-0">
+	<Sheet.Content side="left" class="w-72 overflow-y-auto bg-sidebar p-0">
 		<Sheet.Header class="border-b">
 			<Sheet.Title>Folders</Sheet.Title>
 		</Sheet.Header>

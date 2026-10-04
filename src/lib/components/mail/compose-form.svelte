@@ -231,7 +231,7 @@
 					name="body"
 					value={initial.body}
 					rows={16}
-					class="min-h-64 font-mono text-sm"
+					class="min-h-64 text-sm leading-relaxed"
 					autofocus={initial.mode !== 'new'}
 				/>
 			</div>
@@ -240,7 +240,7 @@
 				{#if carried.length || files.length}
 					<ul class="flex flex-wrap gap-2" aria-label="Attachments">
 						{#each carried as attachment (attachment.partId)}
-							<li class="flex max-w-72 items-center gap-2 border px-2 py-1 text-sm">
+							<li class="flex max-w-72 items-center gap-2 rounded-md border px-2 py-1 text-sm">
 								<span class="min-w-0 truncate">{attachment.filename}</span>
 								<span class="shrink-0 text-xs text-muted-foreground"
 									>{fileSize(attachment.size)}</span
@@ -257,7 +257,7 @@
 							</li>
 						{/each}
 						{#each files as file, index (index)}
-							<li class="flex max-w-72 items-center gap-2 border px-2 py-1 text-sm">
+							<li class="flex max-w-72 items-center gap-2 rounded-md border px-2 py-1 text-sm">
 								<span class="min-w-0 truncate">{file.name}</span>
 								<span class="shrink-0 text-xs text-muted-foreground">{fileSize(file.size)}</span>
 								<button

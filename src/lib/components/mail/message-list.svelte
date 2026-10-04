@@ -46,7 +46,16 @@
 		{@const account = accounts.get(message.accountId)}
 		{@const open = message.ref === openRef}
 		{@const unread = message.unread && !open}
-		<li class={['flex items-stretch', open ? 'bg-accent' : 'hover:bg-accent/50']}>
+		<li
+			class={[
+				'flex items-stretch',
+				open
+					? 'bg-accent shadow-[inset_3px_0_0_var(--color-primary)]'
+					: selected.has(message.ref)
+						? 'bg-accent/50'
+						: 'hover:bg-muted'
+			]}
+		>
 			<div class="flex items-start pt-3 pl-3">
 				<Checkbox
 					checked={selected.has(message.ref)}
@@ -56,16 +65,21 @@
 			</div>
 			<a
 				href={hrefFor(message.ref)}
-				class="flex min-w-0 flex-1 flex-col gap-0.5 px-3 py-2"
+				class="flex min-w-0 flex-1 flex-col gap-1 px-3 py-2.5 focus-visible:outline-offset-[-2px]"
 				aria-current={open ? 'true' : undefined}
 				data-ref={message.ref}
 			>
 				<div class="flex min-w-0 items-center gap-2">
 					{#if unread}
-						<span class="size-2 shrink-0 bg-foreground" aria-hidden="true"></span>
+						<span class="size-2 shrink-0 rounded-full bg-primary" aria-hidden="true"></span>
 						<span class="sr-only">Unread.</span>
 					{/if}
-					<span class={['min-w-0 flex-1 truncate text-sm', unread && 'font-semibold']}>
+					<span
+						class={[
+							'min-w-0 flex-1 truncate text-sm',
+							unread ? 'font-semibold text-foreground' : 'text-foreground/85'
+						]}
+					>
 						{counterpart(message)}
 					</span>
 					{#if message.hasAttachments}
@@ -75,9 +89,15 @@
 						/>
 					{/if}
 					{#if message.starred}
-						<Star class="size-3.5 shrink-0 fill-current" aria-label="Starred" />
+						<Star class="size-3.5 shrink-0 fill-star text-star" aria-label="Starred" />
 					{/if}
-					<time datetime={message.date} class="tabular shrink-0 text-xs text-muted-foreground">
+					<time
+						datetime={message.date}
+						class={[
+							'tabular shrink-0 text-xs',
+							unread ? 'font-semibold text-primary' : 'text-muted-foreground'
+						]}
+					>
 						{listDate(message.date)}
 					</time>
 				</div>
@@ -85,15 +105,15 @@
 					<span
 						class={[
 							'min-w-0 flex-1 truncate text-sm',
-							unread ? 'font-medium' : 'text-muted-foreground'
+							unread ? 'font-medium text-foreground' : 'text-muted-foreground'
 						]}
 					>
-						{#if message.draft}<span class="text-destructive"
+						{#if message.draft}<span class="font-medium text-destructive"
 								>Draft ·
 							</span>{/if}{message.subject || '(no subject)'}
 					</span>
 					{#if showAccount && account}
-						<span class="flex max-w-32 shrink-0 items-center gap-1 text-xs text-muted-foreground">
+						<span class="flex max-w-32 shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
 							<AccountSwatch color={account.color} />
 							<span class="truncate">{account.label}</span>
 						</span>
