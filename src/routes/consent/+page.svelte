@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { page } from '$app/state';
 	import ShieldCheck from '@lucide/svelte/icons/shield-check';
 	import { authClient } from '#lib/auth-client.js';
 	import AccessGrantFields from '#lib/components/access-grant-fields.svelte';
@@ -38,7 +39,7 @@
 
 	<form
 		method="POST"
-		action="?/grant"
+		action="{page.url.search}&/grant"
 		class="flex flex-col gap-4"
 		use:enhance={() => {
 			pending = 'accept';
