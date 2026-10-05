@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import MailComposer from 'nodemailer/lib/mail-composer';
 import type { AddressObject } from 'mailparser';
-import type { Address, AttachmentInfo } from '../../mail-types';
+import type { Address, AttachmentInfo, InvitationResponse } from '../../mail-types';
 import { getAccount, listAccounts } from './accounts';
 import { mailAuth } from './credentials';
 import { errorMessage, MailError } from './errors';
 import { requireFolder, resolveFolder } from './folders';
 import { withClient, withMailbox } from './imap';
+import { findCalendarPart, invitationReply } from './invitations';
 import { encodeMessageRef } from './message-ref';
 import { deleteMessages, getMessage, groupRefs, resolveRef } from './messages';
 import { PROVIDER_CONFIG } from './providers';
@@ -43,6 +44,8 @@ export interface Draft {
 	inReplyTo: string | null;
 	references: string[];
 	attachments: OutgoingAttachment[];
+	/** An iMIP calendar reply, sent as a `text/calendar` alternative. */
+	calendar?: { method: 'REPLY'; content: string };
 }
 
 export interface PreparedDraft {
@@ -181,6 +184,7 @@ async function buildRaw(
 		inReplyTo: draft.inReplyTo ?? undefined,
 		references: draft.references.length ? draft.references : undefined,
 		attachments: draft.attachments,
+		icalEvent: draft.calendar,
 		messageId: headers.messageId,
 		date: headers.date
 	});
@@ -253,6 +257,39 @@ export async function sendDraft(
 			.catch(() => undefined);
 	}
 	return { messageId, to: draft.to, cc: draft.cc, bcc: draft.bcc, subject: draft.subject };
+}
+
+/** Answers an invitation: sends the iMIP reply to its organizer and marks the invitation answered. */
+export async function respondToInvitation(
+	userId: string,
+	ref: string,
+	response: InvitationResponse
+): Promise<SendResult> {
+	const { account, locator } = await resolveRef(userId, ref);
+	const { parsed } = await getMessage(account, locator);
+	const ics = findCalendarPart(parsed.attachments);
+	if (!ics) throw new MailError('This message has no invitation.', 400);
+	const reply = invitationReply(
+		ics,
+		{ name: account.displayName, address: account.email },
+		response
+	);
+	return sendDraft(
+		userId,
+		{
+			accountId: account.id,
+			to: [reply.organizer],
+			cc: [],
+			bcc: [],
+			subject: reply.subject,
+			text: reply.text,
+			inReplyTo: null,
+			references: [],
+			attachments: [],
+			calendar: { method: 'REPLY', content: reply.ics }
+		},
+		{ answersRef: ref }
+	);
 }
 
 /** Saves to the Drafts folder, replacing an earlier version; returns the new draft's ref. */

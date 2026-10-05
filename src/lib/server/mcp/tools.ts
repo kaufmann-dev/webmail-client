@@ -2,14 +2,17 @@ import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import {
 	ACCESS_LEVEL_LABELS,
+	INVITATION_RESPONSES,
 	LIST_FILTERS,
 	type Address,
+	type Invitation,
 	type MessageSummary
 } from '../../mail-types';
 import {
 	loadDraft,
 	prepareForward,
 	prepareReply,
+	respondToInvitation,
 	saveDraft,
 	sendDraft,
 	type Draft,
@@ -46,7 +49,10 @@ reply. compose_new_message is only for starting a brand-new conversation.
 
 Every sending tool takes mode "draft" or "send". Use "draft" unless the user explicitly asked to
 send; drafts appear in the account's Drafts folder for the user to review, and send_draft sends
-one later. Reading a message never marks it as read.`;
+one later. Reading a message never marks it as read.
+
+Calendar invitations appear as "invitation" in get_message. Answer one with respond_to_invitation
+only when the user asked to; it sends the answer to the organizer immediately.`;
 
 function json(value: unknown): CallToolResult {
 	return { content: [{ type: 'text', text: JSON.stringify(value, null, 2) }] };
@@ -89,6 +95,21 @@ function summaryOut(message: MessageSummary, accounts: Map<string, MailAccount>)
 		starred: message.starred,
 		draft: message.draft,
 		has_attachments: message.hasAttachments
+	};
+}
+
+function invitationOut(invitation: Invitation) {
+	return {
+		method: invitation.method,
+		title: invitation.title,
+		start: invitation.start,
+		end: invitation.end,
+		all_day: invitation.allDay,
+		location: invitation.location,
+		organizer: addressText(invitation.organizer),
+		recurring: invitation.recurring,
+		your_status: invitation.ownStatus,
+		attendees: invitation.attendees.map((a) => ({ address: formatAddress(a), status: a.status }))
 	};
 }
 
@@ -293,7 +314,8 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 		{
 			title: 'Read message',
 			description:
-				"Returns a message's headers, plain-text body, and attachment list. Does not mark it as read.",
+				"Returns a message's headers, plain-text body, attachment list, and calendar invitation if it carries one. " +
+				'Does not mark it as read.',
 			inputSchema: z.object({ message_ref: messageRef }),
 			annotations: { readOnlyHint: true }
 		},
@@ -315,6 +337,7 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 						content_type: a.contentType,
 						size: a.size
 					})),
+					invitation: detail.invitation && invitationOut(detail.invitation),
 					body: truncated ? detail.text.slice(0, MAX_BODY_CHARS) : detail.text,
 					body_truncated: truncated
 				};
@@ -529,6 +552,32 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 					attachments: attachmentsFrom(attachments)
 				};
 				return deliver(draft, how);
+			})
+	);
+
+	server.registerTool(
+		'respond_to_invitation',
+		{
+			title: 'Respond to invitation',
+			description:
+				'Accepts, tentatively accepts, or declines the calendar invitation in a message (get_message shows it ' +
+				'with method "request"). Sends the answer to the organizer immediately; there is no draft mode. ' +
+				'Only use it when the user asked to answer the invitation.',
+			inputSchema: z.object({
+				message_ref: messageRef,
+				response: z.enum(INVITATION_RESPONSES)
+			})
+		},
+		({ message_ref, response }) =>
+			guard(async () => {
+				access.requireRef(message_ref, 'send');
+				const result = await respondToInvitation(userId, message_ref, response);
+				return {
+					status: 'sent',
+					response,
+					to: result.to.map(formatAddress),
+					subject: result.subject
+				};
 			})
 	);
 

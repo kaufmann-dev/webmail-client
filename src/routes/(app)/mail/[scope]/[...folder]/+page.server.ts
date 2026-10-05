@@ -1,6 +1,7 @@
 import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
-import type { MessageDetail } from '#lib/mail-types.js';
+import { INVITATION_RESPONSES, type MessageDetail } from '#lib/mail-types.js';
+import { respondToInvitation } from '#lib/server/mail/compose.js';
 import { errorMessage, MailError } from '#lib/server/mail/errors.js';
 import { InvalidMessageRefError } from '#lib/server/mail/message-ref.js';
 import {
@@ -83,5 +84,11 @@ export const actions: Actions = {
 		run(async () => {
 			const { refs } = await refsFrom(request);
 			await deleteMessages(await groupRefs(locals.user.id, refs));
+		}),
+	respond: ({ request, locals }) =>
+		run(async () => {
+			const { form, refs } = await refsFrom(request);
+			const response = z.enum(INVITATION_RESPONSES).parse(form.get('response'));
+			await respondToInvitation(locals.user.id, refs[0], response);
 		})
 };

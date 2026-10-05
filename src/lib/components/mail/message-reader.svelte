@@ -12,6 +12,7 @@
 	import Star from '@lucide/svelte/icons/star';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import AccountSwatch from '#lib/components/account-swatch.svelte';
+	import InvitationCard from '#lib/components/mail/invitation-card.svelte';
 	import MessageBody from '#lib/components/mail/message-body.svelte';
 	import MoveMenu from '#lib/components/mail/move-menu.svelte';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -20,6 +21,7 @@
 	import type {
 		AccountSummary,
 		FolderRole,
+		InvitationResponse,
 		MessageDetail,
 		MessageSummary
 	} from '#lib/mail-types.js';
@@ -33,6 +35,7 @@
 		closeHref,
 		hrefFor,
 		onaction,
+		onrespond,
 		ondeleteforever
 	}: {
 		/** A listed summary shows the header and toolbar while the full message loads. */
@@ -45,6 +48,8 @@
 		closeHref: string;
 		hrefFor: (ref: string) => string;
 		onaction: (action: 'flag' | 'move', fields: Record<string, string>) => void;
+		/** Answers the message's invitation; resolves to an error message or null. */
+		onrespond: (response: InvitationResponse) => Promise<string | null>;
 		ondeleteforever: () => void;
 	} = $props();
 
@@ -55,7 +60,9 @@
 		const recipients = [...message.to, ...(detail?.cc ?? []), ...(detail?.bcc ?? [])];
 		return recipients.some((r) => r.address.toLowerCase() === label) ? undefined : account;
 	});
-	let allowRemote = $state(false);
+	// Remote images load at once, except in Spam, where loading them confirms the address to spammers.
+	let loadRemote = $state(false);
+	const allowRemote = $derived(role !== 'spam' || loadRemote);
 	let thread = $state<MessageSummary[] | null>(null);
 	let threadState = $state<'idle' | 'loading' | 'error'>('idle');
 
@@ -221,11 +228,17 @@
 		{#if detail}
 			{#if detail.hasRemoteImages && !allowRemote}
 				<div class="flex flex-wrap items-center gap-2 rounded-md border p-2 text-sm">
-					<span class="flex-1">Remote images are blocked to keep senders from tracking you.</span>
-					<Button variant="outline" size="sm" onclick={() => (allowRemote = true)}
+					<span class="flex-1"
+						>Remote images are blocked in Spam to keep senders from tracking you.</span
+					>
+					<Button variant="outline" size="sm" onclick={() => (loadRemote = true)}
 						>Load images</Button
 					>
 				</div>
+			{/if}
+
+			{#if detail.invitation}
+				<InvitationCard invitation={detail.invitation} {onrespond} />
 			{/if}
 
 			<MessageBody html={detail.html} {allowRemote} />
