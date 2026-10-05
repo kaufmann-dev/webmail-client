@@ -74,6 +74,8 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
 - Follow the flat (no shadows), lightly rounded (`--radius`), motionless defaults enforced in
   `src/routes/layout.css`. Monochrome: a white light background and a soft near-black dark one.
 - Color appears only as account colors (`--account-*`), always next to the account label.
+- Icon buttons explain themselves on hover with `TooltipButton` (`src/lib/components/tooltip-button.svelte`,
+  `shortcut` for a keyboard key), not `title`. They still need an `sr-only` or `aria-label` name.
 - User actions show their result at once and finish in the background (`postAction` in
   `src/lib/form-action.ts`); a failure undoes the change and shows a toast. Sending continues after
   the editor closes (`src/lib/outbox.ts`).

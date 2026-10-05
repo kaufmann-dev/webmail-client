@@ -18,6 +18,7 @@
 	import MessageList from '#lib/components/mail/message-list.svelte';
 	import MessageReader from '#lib/components/mail/message-reader.svelte';
 	import MoveMenu from '#lib/components/mail/move-menu.svelte';
+	import TooltipButton from '#lib/components/tooltip-button.svelte';
 	import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
@@ -67,8 +68,10 @@
 	// Reset whenever the server sends a fresh list; "Load more" appends locally.
 	let loaded = $derived(list.messages);
 	let cursor = $derived(list.nextCursor);
-	let selected = $derived.by(() => {
-		void list;
+	// The selection survives refreshes of the same list and resets in another folder, filter, or search.
+	const listKey = $derived(JSON.stringify([data.scope, data.folder, data.filter, data.query]));
+	let picked = $derived.by(() => {
+		void listKey;
 		return new Set<string>();
 	});
 	let loadingMore = $state(false);
@@ -213,7 +216,7 @@
 		const change: Change = { refs: targets, remove, flags, unread: unreadDelta, done: null };
 		const oldest = Math.min(listSerial, countsSerial);
 		changes = [...changes.filter((c) => c.done === null || c.done >= oldest), change];
-		if (remove) selected = new Set([...selected].filter((ref) => !targets.has(ref)));
+		if (remove) picked = new Set([...picked].filter((ref) => !targets.has(ref)));
 		if (shownRef && targets.has(shownRef)) {
 			if (!remove) openChanges = [...openChanges, change];
 			// Moving, deleting, or marking unread puts the open message away.
@@ -259,6 +262,8 @@
 		markOpenedRead();
 	});
 
+	// Messages that left the list (moved elsewhere, or beyond the first page after a refresh) drop out.
+	const selected = $derived(new Set(messages.filter((m) => picked.has(m.ref)).map((m) => m.ref)));
 	const selectedRefs = $derived([...selected]);
 	const selectedMessages = $derived(messages.filter((m) => selected.has(m.ref)));
 	const allSelected = $derived(messages.length > 0 && selected.size === messages.length);
@@ -429,7 +434,8 @@
 	>
 		<div class="flex flex-col gap-2 border-b p-2">
 			<div class="flex items-center gap-2">
-				<Button
+				<TooltipButton
+					tooltip="Mailboxes"
 					variant="ghost"
 					size="sm"
 					class="lg:hidden"
@@ -437,7 +443,7 @@
 					onclick={() => (sidebarOpen = true)}
 				>
 					<Menu />
-				</Button>
+				</TooltipButton>
 				<h1 class="min-w-0 flex-1 truncate text-sm font-semibold">{title}</h1>
 				{#if navigating.to}
 					<Spinner aria-label="Loading" />
@@ -454,18 +460,25 @@
 					aria-label="Search this folder"
 					class="h-8"
 				/>
-				<Button type="submit" variant="outline" size="sm" aria-label="Search">
+				<TooltipButton
+					tooltip="Search"
+					type="submit"
+					variant="outline"
+					size="sm"
+					aria-label="Search"
+				>
 					<Search />
-				</Button>
+				</TooltipButton>
 				{#if data.query}
-					<Button
+					<TooltipButton
+						tooltip="Clear search"
 						href={urlWith({ q: null, m: null })}
 						variant="ghost"
 						size="sm"
 						aria-label="Clear search"
 					>
 						<X />
-					</Button>
+					</TooltipButton>
 				{/if}
 			</form>
 			<div class="flex flex-wrap items-center gap-2">
@@ -473,72 +486,72 @@
 					checked={allSelected}
 					indeterminate={selected.size > 0 && !allSelected}
 					onCheckedChange={(checked) =>
-						(selected = checked ? new Set(messages.map((m) => m.ref)) : new Set())}
+						(picked = checked ? new Set(messages.map((m) => m.ref)) : new Set())}
 					aria-label="Select all messages"
 					disabled={!messages.length}
 				/>
 				{#if selected.size}
 					<span class="text-xs text-muted-foreground">{selected.size} selected</span>
 					<div class="flex flex-wrap gap-0.5">
-						<Button
+						<TooltipButton
 							variant="ghost"
 							size="sm"
-							title="Mark read"
+							tooltip="Mark read"
 							onclick={() => act('flag', selectedRefs, { seen: 'true' })}
 						>
 							<MailOpen /><span class="sr-only">Mark read</span>
-						</Button>
-						<Button
+						</TooltipButton>
+						<TooltipButton
 							variant="ghost"
 							size="sm"
-							title="Mark unread"
+							tooltip="Mark unread"
 							onclick={() => act('flag', selectedRefs, { seen: 'false' })}
 						>
 							<Mail /><span class="sr-only">Mark unread</span>
-						</Button>
-						<Button
+						</TooltipButton>
+						<TooltipButton
 							variant="ghost"
 							size="sm"
-							title={allStarred ? 'Unstar' : 'Star'}
+							tooltip={allStarred ? 'Unstar' : 'Star'}
 							aria-pressed={allStarred}
 							onclick={() => act('flag', selectedRefs, { flagged: String(!allStarred) })}
 						>
 							<Star class={allStarred ? 'fill-current' : ''} /><span class="sr-only"
 								>{allStarred ? 'Unstar' : 'Star'}</span
 							>
-						</Button>
+						</TooltipButton>
 						{#if role !== 'archive'}
-							<Button
+							<TooltipButton
 								variant="ghost"
 								size="sm"
-								title="Archive"
+								tooltip="Archive"
 								onclick={() => act('move', selectedRefs, { target: 'archive' })}
 							>
 								<Archive /><span class="sr-only">Archive</span>
-							</Button>
+							</TooltipButton>
 						{/if}
 						<MoveMenu
 							destinations={selectedDestinations}
 							onmove={(target) => act('move', selectedRefs, { target })}
 						/>
 						{#if role === 'spam'}
-							<Button
+							<TooltipButton
 								variant="ghost"
 								size="sm"
-								title="Not spam"
+								tooltip="Not spam"
 								onclick={() => act('move', selectedRefs, { target: 'inbox' })}
 							>
 								<Inbox /><span class="sr-only">Not spam</span>
-							</Button>
+							</TooltipButton>
 						{:else}
-							<Button
+							<TooltipButton
 								variant="ghost"
 								size="sm"
-								title="Report spam"
+								tooltip="Report spam"
 								onclick={() => act('move', selectedRefs, { target: 'spam' })}
 							>
 								<ShieldAlert /><span class="sr-only">Report spam</span>
-							</Button>
+							</TooltipButton>
 						{/if}
 						{#if role === 'trash' || role === 'spam'}
 							<Button
@@ -550,14 +563,14 @@
 								<Trash2 />Delete forever
 							</Button>
 						{:else}
-							<Button
+							<TooltipButton
 								variant="ghost"
 								size="sm"
-								title="Move to trash"
+								tooltip="Move to trash"
 								onclick={() => act('move', selectedRefs, { target: 'trash' })}
 							>
 								<Trash2 /><span class="sr-only">Move to trash</span>
-							</Button>
+							</TooltipButton>
 						{/if}
 					</div>
 				{:else}
@@ -607,7 +620,7 @@
 					accounts={accountsById}
 					openRef={shownRef}
 					{selected}
-					onselectionchange={(next) => (selected = next)}
+					onselectionchange={(next) => (picked = next)}
 					showAccount={data.scope === 'all'}
 					showRecipient={role === 'sent' || role === 'drafts'}
 					{hrefFor}

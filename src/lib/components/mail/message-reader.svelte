@@ -15,6 +15,7 @@
 	import InvitationCard from '#lib/components/mail/invitation-card.svelte';
 	import MessageBody from '#lib/components/mail/message-body.svelte';
 	import MoveMenu from '#lib/components/mail/move-menu.svelte';
+	import TooltipButton from '#lib/components/tooltip-button.svelte';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Spinner } from '#lib/components/ui/spinner/index.js';
 	import { fileSize, formatAddress, longDate, senderName } from '#lib/format.js';
@@ -87,102 +88,118 @@
 	<div
 		class="flex flex-wrap items-center gap-0.5 border-b p-2 @max-2xl:[&>[data-slot=button]]:px-1.5"
 	>
-		<Button href={closeHref} variant="ghost" size="sm" class="lg:hidden" title="Back">
+		<TooltipButton href={closeHref} variant="ghost" size="sm" class="lg:hidden" tooltip="Back">
 			<ArrowLeft />
 			<span class="sr-only">Back</span>
-		</Button>
-		<Button href={compose({ reply: message.ref })} variant="ghost" size="sm" title="Reply (r)">
+		</TooltipButton>
+		<TooltipButton
+			href={compose({ reply: message.ref })}
+			variant="ghost"
+			size="sm"
+			tooltip="Reply"
+			shortcut="r"
+		>
 			<Reply />
 			<span class="@max-2xl:sr-only">Reply</span>
-		</Button>
-		<Button
+		</TooltipButton>
+		<TooltipButton
 			href={compose({ reply: message.ref, all: '1' })}
 			variant="ghost"
 			size="sm"
-			title="Reply all (a)"
+			tooltip="Reply all"
+			shortcut="a"
 		>
 			<ReplyAll />
 			<span class="@max-2xl:sr-only">Reply all</span>
-		</Button>
-		<Button href={compose({ forward: message.ref })} variant="ghost" size="sm" title="Forward (f)">
+		</TooltipButton>
+		<TooltipButton
+			href={compose({ forward: message.ref })}
+			variant="ghost"
+			size="sm"
+			tooltip="Forward"
+			shortcut="f"
+		>
 			<Forward />
 			<span class="@max-2xl:sr-only">Forward</span>
-		</Button>
+		</TooltipButton>
 		<span class="mx-1 h-5 w-px bg-border" aria-hidden="true"></span>
 		{#if role !== 'archive'}
-			<Button
+			<TooltipButton
 				variant="ghost"
 				size="sm"
-				title="Archive (e)"
+				tooltip="Archive"
+				shortcut="e"
 				onclick={() => onaction('move', { target: 'archive' })}
 			>
 				<Archive />
 				<span class="sr-only">Archive</span>
-			</Button>
+			</TooltipButton>
 		{/if}
-		<Button
+		<TooltipButton
 			variant="ghost"
 			size="sm"
-			title="Mark unread (u)"
+			tooltip="Mark unread"
+			shortcut="u"
 			onclick={() => onaction('flag', { seen: 'false' })}
 		>
 			<Mail />
 			<span class="sr-only">Mark unread</span>
-		</Button>
-		<Button
+		</TooltipButton>
+		<TooltipButton
 			variant="ghost"
 			size="sm"
-			title={message.starred ? 'Unstar' : 'Star'}
+			tooltip={message.starred ? 'Unstar' : 'Star'}
 			aria-pressed={message.starred}
 			onclick={() => onaction('flag', { flagged: String(!message.starred) })}
 		>
 			<Star class={message.starred ? 'fill-current' : ''} />
 			<span class="sr-only">{message.starred ? 'Unstar' : 'Star'}</span>
-		</Button>
+		</TooltipButton>
 		<MoveMenu {destinations} onmove={(target) => onaction('move', { target })} />
 		{#if role === 'spam'}
-			<Button
+			<TooltipButton
 				variant="ghost"
 				size="sm"
-				title="Not spam"
+				tooltip="Not spam"
 				onclick={() => onaction('move', { target: 'inbox' })}
 			>
 				<Inbox />
 				<span class="sr-only">Not spam</span>
-			</Button>
+			</TooltipButton>
 		{:else}
-			<Button
+			<TooltipButton
 				variant="ghost"
 				size="sm"
-				title="Report spam"
+				tooltip="Report spam"
 				onclick={() => onaction('move', { target: 'spam' })}
 			>
 				<ShieldAlert />
 				<span class="sr-only">Report spam</span>
-			</Button>
+			</TooltipButton>
 		{/if}
 		{#if role === 'trash' || role === 'spam'}
-			<Button
+			<TooltipButton
 				variant="ghost"
 				size="sm"
 				class="ml-auto text-destructive"
-				title="Delete forever"
+				tooltip="Delete forever"
 				onclick={ondeleteforever}
 			>
 				<Trash2 />
 				<span class="sr-only">Delete forever</span>
-			</Button>
+			</TooltipButton>
 		{:else}
-			<Button
+			<TooltipButton
 				variant="ghost"
 				size="sm"
 				class="ml-auto"
-				title="Move to trash (#)"
+				tooltip="Move to trash"
+				shortcut="#"
 				onclick={() => onaction('move', { target: 'trash' })}
 			>
 				<Trash2 />
 				<span class="sr-only">Move to trash</span>
-			</Button>
+			</TooltipButton>
 		{/if}
 	</div>
 

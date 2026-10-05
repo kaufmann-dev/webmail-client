@@ -1,6 +1,6 @@
 <script lang="ts">
 	import FolderInput from '@lucide/svelte/icons/folder-input';
-	import { Button } from '#lib/components/ui/button/index.js';
+	import TooltipButton from '#lib/components/tooltip-button.svelte';
 	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
 	import { FOLDER_ROLE_LABELS } from '#lib/mail-types.js';
 	import type { MoveDestination } from '#lib/move-targets.js';
@@ -18,10 +18,10 @@
 	<DropdownMenu.Root>
 		<DropdownMenu.Trigger>
 			{#snippet child({ props })}
-				<Button {...props} variant="ghost" size="sm" title="Move to folder">
+				<TooltipButton {...props} variant="ghost" size="sm" tooltip="Move to folder">
 					<FolderInput />
 					<span class="sr-only">Move to folder</span>
-				</Button>
+				</TooltipButton>
 			{/snippet}
 		</DropdownMenu.Trigger>
 		<DropdownMenu.Content align="end" class="max-h-80 max-w-72 overflow-y-auto">

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { toast } from 'svelte-sonner';
 	import CalendarDays from '@lucide/svelte/icons/calendar-days';
-	import { Button } from '#lib/components/ui/button/index.js';
+	import TooltipButton from '#lib/components/tooltip-button.svelte';
 	import { eventWhen, formatAddress, senderName } from '#lib/format.js';
 	import {
 		INVITATION_RESPONSES,
@@ -74,13 +74,13 @@
 	{#if invitation.method === 'request'}
 		<div class="flex flex-wrap gap-2" role="group" aria-label="Your answer">
 			{#each INVITATION_RESPONSES as response (response)}
-				<Button
+				<TooltipButton
 					variant={chosen === response ? 'secondary' : 'outline'}
 					size="sm"
 					aria-pressed={chosen === response}
 					disabled={sending}
-					title="Send “{LABELS[response]}” to the organizer"
-					onclick={() => respond(response)}>{LABELS[response]}</Button
+					tooltip="Send “{LABELS[response]}” to the organizer"
+					onclick={() => respond(response)}>{LABELS[response]}</TooltipButton
 				>
 			{/each}
 		</div>
