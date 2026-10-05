@@ -18,11 +18,17 @@ body{padding:16px;font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;ov
 img{max-width:100%;height:auto}pre{white-space:pre-wrap}
 blockquote{margin:0 0 0 .5em;padding-left:.75em;border-left:2px solid #ccc}`;
 
+	// The frame takes the document's height, so the document must take its content's height. Emails
+	// often set `html, body { height: 100% }` (sometimes with `overflow: hidden`), which ties the
+	// document to the frame instead: the frame stays at its default height or grows without end.
+	// This comes after the message so it wins over the message's own `!important` rules.
+	const FIT_STYLE = `<style>html,body{height:auto!important;min-height:0!important;max-height:none!important;overflow:visible!important}</style>`;
+
 	const srcdoc = $derived(
 		`<!doctype html><html><head><meta charset="utf-8">` +
 			`<meta http-equiv="Content-Security-Policy" content="${csp}">` +
 			`<meta name="referrer" content="no-referrer">` +
-			`<base target="_blank"><style>${BASE_STYLE}</style></head><body>${html}</body></html>`
+			`<base target="_blank"><style>${BASE_STYLE}</style></head><body>${html}${FIT_STYLE}</body></html>`
 	);
 
 	let observer: ResizeObserver | undefined;
