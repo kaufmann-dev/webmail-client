@@ -139,7 +139,9 @@
 
 <svelte:head><title>{heading} · Mail</title></svelte:head>
 
-<div class="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col overflow-y-auto px-4 py-6">
+<div
+	class="relative mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col overflow-y-auto px-4 py-6"
+>
 	<h1 class="mb-4 text-xl font-semibold">{heading}</h1>
 
 	{#if !accounts.length}
