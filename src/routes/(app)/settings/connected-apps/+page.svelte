@@ -1,4 +1,5 @@
 <script lang="ts">
+	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { enhance } from '$app/forms';
 	import { invalidateAll } from '$app/navigation';
@@ -86,41 +87,56 @@
 	</div>
 
 	{#each apps as app (app.clientId)}
-		<form
-			method="POST"
-			action="?/save"
-			class="flex flex-col gap-3 rounded-lg border p-4"
-			use:enhance={() =>
-				async ({ result, update }) => {
-					if (result.type === 'success') toast.success(`Saved access for ${app.name}`);
-					await update({ reset: false });
-				}}
-		>
-			<input type="hidden" name="clientId" value={app.clientId} />
-			<div class="flex flex-wrap items-baseline justify-between gap-2">
-				<h2 class="min-w-0 truncate font-medium">{app.name}</h2>
+		{@const allowed = data.accounts.filter((account) => app.access[account.id]).length}
+		<details class="group rounded-lg border">
+			<summary
+				class="flex cursor-pointer list-none flex-wrap items-center gap-x-3 gap-y-1 p-4 [&::-webkit-details-marker]:hidden"
+			>
+				<h3 class="min-w-0 truncate font-medium">{app.name}</h3>
+				<span class="text-sm text-muted-foreground">
+					{allowed
+						? `${allowed} of ${data.accounts.length} ${data.accounts.length === 1 ? 'account' : 'accounts'}`
+						: 'No accounts'}
+				</span>
+				<span class="flex-1"></span>
 				<span class="text-xs text-muted-foreground"
 					>Authorized {longDate.format(app.grantedAt)}</span
 				>
-			</div>
-			{#if data.accounts.length}
-				<AccessGrantFields accounts={data.accounts} access={app.access} idPrefix={app.clientId} />
-			{:else}
-				<p class="text-sm text-muted-foreground">Add a mail account first.</p>
-			{/if}
-			<div class="flex flex-wrap gap-2">
-				<Button type="submit" size="sm" disabled={!data.accounts.length}>Save access</Button>
-				<span class="flex-1"></span>
-				<Button
-					variant="ghost"
-					size="sm"
-					class="text-destructive"
-					onclick={() => (revoking = { clientId: app.clientId, name: app.name })}
-				>
-					Revoke
-				</Button>
-			</div>
-		</form>
+				<ChevronDown
+					class="size-4 shrink-0 text-muted-foreground group-open:rotate-180"
+					aria-hidden="true"
+				/>
+			</summary>
+			<form
+				method="POST"
+				action="?/save"
+				class="flex flex-col gap-3 px-4 pb-4"
+				use:enhance={() =>
+					async ({ result, update }) => {
+						if (result.type === 'success') toast.success(`Saved access for ${app.name}`);
+						await update({ reset: false });
+					}}
+			>
+				<input type="hidden" name="clientId" value={app.clientId} />
+				{#if data.accounts.length}
+					<AccessGrantFields accounts={data.accounts} access={app.access} idPrefix={app.clientId} />
+				{:else}
+					<p class="text-sm text-muted-foreground">Add a mail account first.</p>
+				{/if}
+				<div class="flex flex-wrap gap-2">
+					<Button type="submit" size="sm" disabled={!data.accounts.length}>Save access</Button>
+					<span class="flex-1"></span>
+					<Button
+						variant="ghost"
+						size="sm"
+						class="text-destructive"
+						onclick={() => (revoking = { clientId: app.clientId, name: app.name })}
+					>
+						Revoke
+					</Button>
+				</div>
+			</form>
+		</details>
 	{:else}
 		<div class="flex flex-col gap-2 rounded-lg border p-4 text-sm">
 			<p class="font-medium">No apps connected yet</p>
