@@ -224,7 +224,7 @@
 >
 	<AlertDialog.Content>
 		<AlertDialog.Header>
-			<AlertDialog.Title>Remove {removing?.email}?</AlertDialog.Title>
+			<AlertDialog.Title class="wrap-anywhere">Remove {removing?.email}?</AlertDialog.Title>
 			<AlertDialog.Description>
 				The app forgets its credentials and AI apps lose access to it. No mail is deleted from the
 				mailbox.

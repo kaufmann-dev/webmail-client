@@ -137,7 +137,7 @@
 >
 	<AlertDialog.Content>
 		<AlertDialog.Header>
-			<AlertDialog.Title>Revoke {revoking?.name}?</AlertDialog.Title>
+			<AlertDialog.Title class="wrap-anywhere">Revoke {revoking?.name}?</AlertDialog.Title>
 			<AlertDialog.Description>
 				It loses access to all mail accounts and has to be authorized again.
 			</AlertDialog.Description>
