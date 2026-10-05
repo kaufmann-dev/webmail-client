@@ -18,6 +18,7 @@ import { getAccount } from './accounts';
 import { errorMessage, MailError } from './errors';
 import { ensureArchiveFolder, requireFolder, resolveFolder } from './folders';
 import { withMailbox } from './imap';
+import { findCalendarPart, isCalendarPart, parseInvitation } from './invitations';
 import { decodeCursor, encodeCursor, mergePages, type AccountPage } from './merge';
 import { decodeMessageRef, encodeMessageRef, type MessageLocator } from './message-ref';
 import { sanitizeEmailHtml, textToHtml } from './render';
@@ -241,6 +242,8 @@ export async function getMessage(
 	const parsed = await simpleParser(message.source!);
 	const summary = toSummary(account, locator.path, mailbox, message);
 	const html = parsed.html ? sanitizeEmailHtml(parsed.html) : null;
+	const calendar = findCalendarPart(parsed.attachments);
+	const invitation = calendar ? parseInvitation(calendar, account.email) : null;
 	const detail: MessageDetail = {
 		...summary,
 		from: parsedAddresses(parsed.from)[0] ?? summary.from,
@@ -255,8 +258,9 @@ export async function getMessage(
 		text: parsed.text ?? '',
 		html: html?.html ?? textToHtml(parsed.text ?? ''),
 		hasRemoteImages: html?.hasRemoteImages ?? false,
+		// An unnamed calendar part is the invitation's machine-readable form, shown as the invitation.
 		attachments: parsed.attachments.flatMap((attachment, index) =>
-			attachment.related
+			attachment.related || (invitation && !attachment.filename && isCalendarPart(attachment))
 				? []
 				: [
 						{
@@ -266,7 +270,8 @@ export async function getMessage(
 							size: attachment.size
 						}
 					]
-		)
+		),
+		invitation
 	};
 	return { detail, parsed };
 }

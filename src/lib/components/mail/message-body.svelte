@@ -2,7 +2,7 @@
 	let { html, allowRemote }: { html: string; allowRemote: boolean } = $props();
 
 	// No scripts ever run: the sandbox omits allow-scripts and the CSP has no script-src. Remote
-	// images, fonts, and CSS backgrounds load only after the user allows them.
+	// images, fonts, and CSS backgrounds load only with `allowRemote`, and never send a referrer.
 	const csp = $derived(
 		[
 			"default-src 'none'",
@@ -21,6 +21,7 @@ blockquote{margin:0 0 0 .5em;padding-left:.75em;border-left:2px solid #ccc}`;
 	const srcdoc = $derived(
 		`<!doctype html><html><head><meta charset="utf-8">` +
 			`<meta http-equiv="Content-Security-Policy" content="${csp}">` +
+			`<meta name="referrer" content="no-referrer">` +
 			`<base target="_blank"><style>${BASE_STYLE}</style></head><body>${html}</body></html>`
 	);
 

@@ -406,6 +406,7 @@
 		{closeHref}
 		{hrefFor}
 		onaction={(action, fields) => act(action, [message.ref], fields)}
+		onrespond={(response) => postAction(`${basePath}?/respond`, { ref: message.ref, response })}
 		ondeleteforever={() => (confirmDelete = [message.ref])}
 	/>
 {/snippet}

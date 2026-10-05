@@ -15,8 +15,11 @@ and on the consent screen you choose which mail accounts each app may use and at
   keyboard. Also search (Gmail search syntax for Gmail), unread and starred filters, multi-select
   actions, moving messages by dragging them onto a folder, keyboard shortcuts (`?` lists them),
   and a conversation view.
-- **Reading:** HTML mail renders in a sandboxed frame with no scripts. Remote images stay blocked
-  until you load them.
+- **Reading:** HTML mail renders in a sandboxed frame with no scripts. Remote images load right
+  away, except in Spam, where they stay blocked until you load them.
+- **Invitations:** calendar invitations show their time, place, and organizer. Accept, Maybe, and
+  Decline send the standard calendar reply to the organizer. The provider's own calendar does not
+  learn the answer.
 - **Writing:** reply, reply all, forward (attachments included), drafts, attachments, and a
   signature per account. Replies keep `In-Reply-To` and `References`, so they stay in the
   conversation.
@@ -113,24 +116,26 @@ shows these steps with copyable commands for the deployed URL.
   - Client ID Metadata Documents and Dynamic Client Registration.
   - PKCE (S256).
 
-| Tool                  | Level            | Purpose                                                                           |
-| --------------------- | ---------------- | --------------------------------------------------------------------------------- |
-| `list_accounts`       | Read             | Granted accounts and their access levels                                          |
-| `list_folders`        | Read             | An account's folders, with roles (inbox, drafts, sent, archive, spam, trash)      |
-| `list_messages`       | Read             | A folder across one or all granted accounts, newest first, with paging            |
-| `search_messages`     | Read             | Search by text, sender, recipient, subject, date, unread, or starred              |
-| `get_message`         | Read             | Headers, plain-text body, and attachment list; does not mark the message read     |
-| `get_thread`          | Read             | Other messages of the same conversation, sent ones included                       |
-| `get_attachment`      | Read             | An attachment as text, image, or base64 (up to 10 MB)                             |
-| `update_messages`     | Read & organize  | Mark read/unread, star, archive, trash, spam, or move                             |
-| `reply_to_message`    | Organize or Full | Threaded reply or reply-all with the quote; `mode` is `draft` (default) or `send` |
-| `forward_message`     | Organize or Full | Forward with the original headers and attachments                                 |
-| `compose_new_message` | Organize or Full | New conversations only; rejects `Re:` subjects                                    |
-| `send_draft`          | Full             | Send a draft from the Drafts folder                                               |
+| Tool                    | Level            | Purpose                                                                           |
+| ----------------------- | ---------------- | --------------------------------------------------------------------------------- |
+| `list_accounts`         | Read             | Granted accounts and their access levels                                          |
+| `list_folders`          | Read             | An account's folders, with roles (inbox, drafts, sent, archive, spam, trash)      |
+| `list_messages`         | Read             | A folder across one or all granted accounts, newest first, with paging            |
+| `search_messages`       | Read             | Search by text, sender, recipient, subject, date, unread, or starred              |
+| `get_message`           | Read             | Headers, body, attachments, and any invitation; does not mark the message read    |
+| `get_thread`            | Read             | Other messages of the same conversation, sent ones included                       |
+| `get_attachment`        | Read             | An attachment as text, image, or base64 (up to 10 MB)                             |
+| `update_messages`       | Read & organize  | Mark read/unread, star, archive, trash, spam, or move                             |
+| `reply_to_message`      | Organize or Full | Threaded reply or reply-all with the quote; `mode` is `draft` (default) or `send` |
+| `forward_message`       | Organize or Full | Forward with the original headers and attachments                                 |
+| `compose_new_message`   | Organize or Full | New conversations only; rejects `Re:` subjects                                    |
+| `send_draft`            | Full             | Send a draft from the Drafts folder                                               |
+| `respond_to_invitation` | Full             | Accept, tentatively accept, or decline an invitation; sends immediately           |
 
 Messages are addressed by an opaque `message_ref`. The reply and forward tools derive the subject,
 recipients, and threading headers from the original message, so "reply to this email" always
-stays in the conversation. Sending tools save a draft unless the request explicitly says to send.
+stays in the conversation. Sending tools save a draft unless the request explicitly says to send;
+`respond_to_invitation` has no draft mode and sends its answer at once.
 
 ## Authentication Setup
 

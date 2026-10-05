@@ -34,7 +34,7 @@ export const ACCESS_LEVEL_LABELS: Record<AccessLevel, string> = {
 export const ACCESS_LEVEL_DESCRIPTIONS: Record<AccessLevel, string> = {
 	read: 'List, search, and read messages and attachments.',
 	organize: 'Also flag, move, archive, trash, and save drafts.',
-	send: 'Also send replies, forwards, and new messages.'
+	send: 'Also send replies, forwards, new messages, and invitation responses.'
 };
 
 export const FOLDER_ROLES = ['inbox', 'drafts', 'sent', 'archive', 'spam', 'trash'] as const;
@@ -95,6 +95,32 @@ export interface AttachmentInfo {
 	size: number;
 }
 
+export const INVITATION_RESPONSES = ['accepted', 'tentative', 'declined'] as const;
+export type InvitationResponse = (typeof INVITATION_RESPONSES)[number];
+export type AttendeeStatus = InvitationResponse | 'needs-action' | 'delegated';
+
+export interface Attendee extends Address {
+	status: AttendeeStatus;
+}
+
+/** A calendar invitation carried by a message (iCalendar over email, RFC 6047). */
+export interface Invitation {
+	/** `request` asks for an answer, `cancel` withdraws the event, `reply` answers the user's own invitation. */
+	method: 'request' | 'cancel' | 'reply' | 'other';
+	title: string;
+	/** An ISO instant, or `YYYY-MM-DD` for all-day events. */
+	start: string;
+	/** Exclusive end in the same form as `start`. */
+	end: string | null;
+	allDay: boolean;
+	location: string | null;
+	organizer: Address | null;
+	recurring: boolean;
+	attendees: Attendee[];
+	/** The receiving account's own status when it is listed as an attendee. */
+	ownStatus: AttendeeStatus | null;
+}
+
 export interface MessageDetail extends MessageSummary {
 	cc: Address[];
 	bcc: Address[];
@@ -107,6 +133,7 @@ export interface MessageDetail extends MessageSummary {
 	/** Whether the HTML references remote images that were blocked. */
 	hasRemoteImages: boolean;
 	attachments: AttachmentInfo[];
+	invitation: Invitation | null;
 }
 
 export interface AccountError {

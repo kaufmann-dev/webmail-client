@@ -42,6 +42,8 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
   - `messages.ts`: listing, search, reading, moving, and threads.
   - `compose.ts`: drafts and sending.
   - `threading.ts`: pure reply and forward header logic.
+  - `invitations.ts`: pure calendar invitation parsing and iMIP replies (ical.js);
+    `respondToInvitation` in `compose.ts` sends them.
 - Reply and forward headers (`In-Reply-To`, `References`, subject prefixes, recipients) are built
   only by `prepareReply` / `prepareForward` in `compose.ts`, using `threading.ts`. Never accept them
   from MCP input.
@@ -52,8 +54,8 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
   `toSummary`).
 - Throw `MailError` for messages that are safe to show users and AI clients.
 - Message HTML is sanitized in `render.ts` and rendered only in the sandboxed iframe in
-  `message-body.svelte` (no `allow-scripts`, CSP blocks remote loads until allowed). Attachments
-  are served with `Content-Disposition: attachment`.
+  `message-body.svelte` (no `allow-scripts`, no referrer; the CSP blocks remote loads in Spam until
+  allowed). Attachments are served with `Content-Disposition: attachment`.
 
 ## Auth and MCP
 
@@ -64,7 +66,8 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
   access lives in `mcp_account_access` (levels `read` < `organize` < `send`), set on
   `/consent` and in Settings → Connected apps.
 - Every MCP tool in `src/lib/server/mcp/tools.ts` must call `access.require` or
-  `access.requireRef` with its level before touching mail. Sending tools default to `mode: 'draft'`.
+  `access.requireRef` with its level before touching mail. Sending tools default to `mode: 'draft'`,
+  except `respond_to_invitation`, which always sends (a saved draft would lose its calendar part).
 
 ## UI
 
