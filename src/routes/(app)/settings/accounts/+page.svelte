@@ -9,6 +9,7 @@
 	import ArrowUp from '@lucide/svelte/icons/arrow-up';
 	import Plus from '@lucide/svelte/icons/plus';
 	import AccountSwatch from '#lib/components/account-swatch.svelte';
+	import TooltipButton from '#lib/components/tooltip-button.svelte';
 	import * as Alert from '#lib/components/ui/alert/index.js';
 	import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -97,7 +98,8 @@
 					</span>
 				</div>
 				<div class="flex">
-					<Button
+					<TooltipButton
+						tooltip="Move up"
 						variant="ghost"
 						size="sm"
 						disabled={index === 0}
@@ -105,8 +107,9 @@
 						onclick={() => moveAccount(account.id, 'up')}
 					>
 						<ArrowUp />
-					</Button>
-					<Button
+					</TooltipButton>
+					<TooltipButton
+						tooltip="Move down"
 						variant="ghost"
 						size="sm"
 						disabled={index === accounts.length - 1}
@@ -114,7 +117,7 @@
 						onclick={() => moveAccount(account.id, 'down')}
 					>
 						<ArrowDown />
-					</Button>
+					</TooltipButton>
 				</div>
 			</div>
 			{#if account.lastError}
