@@ -114,13 +114,9 @@
 		box-shadow: none !important;
 		transition: none !important;
 	}
+	/* Loading spinners keep turning even with reduced motion: stopped, they look broken. */
 	*:not(.animate-spin) {
 		animation: none !important;
-	}
-	@media (prefers-reduced-motion: reduce) {
-		.animate-spin {
-			animation: none !important;
-		}
 	}
 	:focus-visible {
 		outline: 2px solid var(--foreground) !important;
