@@ -27,7 +27,7 @@
 		showAccount: boolean;
 		/** Sent and Drafts show who a message went to rather than who sent it. */
 		showRecipient: boolean;
-		hrefFor: (ref: string) => string;
+		hrefFor: (message: MessageSummary) => string;
 		/** Dragging a selected message drags the whole selection. */
 		ondragstart: (refs: string[]) => void;
 		ondragend: () => void;
@@ -84,7 +84,7 @@
 				/>
 			</div>
 			<a
-				href={hrefFor(message.ref)}
+				href={hrefFor(message)}
 				class="flex min-w-0 flex-1 flex-col gap-0.5 px-3 py-2"
 				aria-current={open ? 'true' : undefined}
 				data-ref={message.ref}
