@@ -166,7 +166,11 @@
 		return query ? `${basePath}?${query}` : basePath;
 	}
 
-	const hrefFor = (ref: string) => urlWith({ m: ref });
+	/** Drafts open in the editor; other messages open in the reader. */
+	const hrefFor = (message: MessageSummary) =>
+		message.draft
+			? `${resolve('/(app)/compose')}?${new URLSearchParams({ draft: message.ref })}`
+			: urlWith({ m: message.ref });
 	const closeHref = $derived(urlWith({ m: null }));
 
 	async function loadMore() {
@@ -293,7 +297,7 @@
 
 	function openIndex(index: number) {
 		const message = messages[index];
-		if (message) goto(hrefFor(message.ref), { reset: false });
+		if (message) goto(hrefFor(message), { reset: false });
 	}
 
 	function onkeydown(event: KeyboardEvent) {

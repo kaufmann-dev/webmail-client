@@ -47,7 +47,7 @@
 		/** Role of the folder being viewed, which decides Trash vs. Delete forever and Spam vs. Not spam. */
 		role: FolderRole | null;
 		closeHref: string;
-		hrefFor: (ref: string) => string;
+		hrefFor: (message: MessageSummary) => string;
 		onaction: (action: 'flag' | 'move', fields: Record<string, string>) => void;
 		/** Answers the message's invitation; resolves to an error message or null. */
 		onrespond: (response: InvitationResponse) => Promise<string | null>;
@@ -292,7 +292,7 @@
 						{#each thread as item (item.ref)}
 							<li>
 								<a
-									href={hrefFor(item.ref)}
+									href={hrefFor(item)}
 									class={[
 										'flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent',
 										item.messageId === message.messageId && 'font-medium'
