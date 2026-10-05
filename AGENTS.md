@@ -79,3 +79,5 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
   the editor closes (`src/lib/outbox.ts`).
 - The open message streams from the page load, which must stay free of side effects because links
   preload on hover. The page marks a message read once it is shown.
+- Every `overflow-y-auto` scroll area is also `relative`. Otherwise `sr-only` labels inside it
+  (absolutely positioned) are placed against the page and stretch it past the `h-dvh` shell.

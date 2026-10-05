@@ -10,7 +10,7 @@
 	];
 </script>
 
-<div class="min-h-0 flex-1 overflow-y-auto">
+<div class="relative min-h-0 flex-1 overflow-y-auto">
 	<div class="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-6">
 		<nav aria-label="Settings" class="flex gap-1 border-b">
 			{#each tabs as tab (tab.href)}
