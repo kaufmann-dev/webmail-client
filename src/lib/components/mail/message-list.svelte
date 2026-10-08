@@ -51,9 +51,27 @@
 		ondragstart(refs);
 	}
 
-	function toggle(ref: string, checked: boolean) {
-		const others = [...selected].filter((r) => r !== ref);
-		onselectionchange(new Set(checked ? [...others, ref] : others));
+	// The last message clicked; Shift-click extends from here to the clicked message.
+	let anchor: string | null = null;
+	let shiftHeld = false;
+
+	function select(ref: string, checked: boolean, range: boolean) {
+		const from = range && anchor ? messages.findIndex((m) => m.ref === anchor) : -1;
+		const to = messages.findIndex((m) => m.ref === ref);
+		const refs =
+			from === -1 || to === -1
+				? [ref]
+				: messages.slice(Math.min(from, to), Math.max(from, to) + 1).map((m) => m.ref);
+		const kept = [...selected].filter((r) => !refs.includes(r));
+		anchor = ref;
+		onselectionchange(new Set(checked ? [...kept, ...refs] : kept));
+	}
+
+	/** Shift-clicking a message selects the range up to it instead of opening it. */
+	function onrowclick(event: MouseEvent, ref: string) {
+		if (!event.shiftKey) return;
+		event.preventDefault();
+		select(ref, true, true);
 	}
 
 	function counterpart(message: MessageSummary): string {
@@ -76,10 +94,14 @@
 			ondragstart={(event) => startDrag(event, message)}
 			{ondragend}
 		>
-			<div class="flex items-start pt-3 pl-3">
+			<div
+				class="flex items-start pt-3 pl-3"
+				onclickcapture={(event) => (shiftHeld = event.shiftKey)}
+				role="presentation"
+			>
 				<Checkbox
 					checked={selected.has(message.ref)}
-					onCheckedChange={(checked) => toggle(message.ref, checked === true)}
+					onCheckedChange={(checked) => select(message.ref, checked === true, shiftHeld)}
 					aria-label="Select message: {message.subject || '(no subject)'}"
 				/>
 			</div>
@@ -89,6 +111,11 @@
 				aria-current={open ? 'true' : undefined}
 				data-ref={message.ref}
 				draggable="false"
+				onclick={(event) => onrowclick(event, message.ref)}
+				onmousedown={(event) => {
+					// Keeps Shift-click from selecting text.
+					if (event.shiftKey) event.preventDefault();
+				}}
 			>
 				<div class="flex min-w-0 items-center gap-2">
 					{#if unread}
