@@ -462,13 +462,12 @@
 					value={data.query}
 					placeholder="Search this folder"
 					aria-label="Search this folder"
-					class="h-8"
 				/>
 				<TooltipButton
 					tooltip="Search"
 					type="submit"
 					variant="outline"
-					size="sm"
+					size="icon"
 					aria-label="Search"
 				>
 					<Search />
@@ -478,7 +477,7 @@
 						tooltip="Clear search"
 						href={urlWith({ q: null, m: null })}
 						variant="ghost"
-						size="sm"
+						size="icon"
 						aria-label="Clear search"
 					>
 						<X />
