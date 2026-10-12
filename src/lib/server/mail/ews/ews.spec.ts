@@ -221,8 +221,11 @@ describe('requests', () => {
 		expect(xml).toContain('<t:FolderId Id="F&lt;1&gt;"/>');
 		expect(xml).toContain('Offset="50"');
 		expect(xml).toContain(
-			'<m:QueryString>Budget &amp; Plan from:&quot;ab&quot; isread:false</m:QueryString>'
+			'<m:QueryString>Budget &amp; Plan from:(a b) isread:false</m:QueryString>'
 		);
+		// Words in parentheses match anywhere in the field, unlike a quoted phrase.
+		expect(request.queryString({ subject: 'Budget' })).toBe('subject:(Budget)');
+		expect(request.queryString({ subject: ' Der "Plan" (neu) ' })).toBe('subject:(Der Plan neu)');
 		expect(request.queryString({ query: 'invoice', since: new Date('2026-10-04T13:00:00Z') })).toBe(
 			'invoice received:>=10/4/2026'
 		);

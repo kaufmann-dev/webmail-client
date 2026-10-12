@@ -15,25 +15,25 @@ const OUTLOOK_CHAIN = `<html><head><style>p.MsoNormal{margin:0cm;font-size:11.0p
 <p class="MsoNormal"><o:p>&nbsp;</o:p></p>
 <p class="MsoNormal">passt, ich bringe die Unterlagen am Donnerstag mit.<o:p></o:p></p>
 <p class="MsoNormal"><o:p>&nbsp;</o:p></p>
-<p class="MsoNormal">LG David<o:p></o:p></p>
+<p class="MsoNormal">LG Max<o:p></o:p></p>
 <p class="MsoNormal"><o:p>&nbsp;</o:p></p>
 <div style="border:none;border-top:solid #E1E1E1 1.0pt;padding:3.0pt 0cm 0cm 0cm">
-<p class="MsoNormal"><b>Von:</b> Berger Anna &lt;anna.berger@bildung-wien.gv.at&gt; <br>
+<p class="MsoNormal"><b>Von:</b> Berger Anna &lt;anna.berger@example.org&gt; <br>
 <b>Gesendet:</b> Montag, 12. Oktober 2026 09:14<br>
-<b>An:</b> KAUFMANN David &lt;david.kaufmann@bildung-wien.gv.at&gt;<br>
+<b>An:</b> MUSTER Max &lt;max.muster@example.org&gt;<br>
 <b>Betreff:</b> AW: AW: Termin Elternabend<o:p></o:p></p></div>
-<p class="MsoNormal">Lieber Herr Kaufmann,<o:p></o:p></p>
+<p class="MsoNormal">Lieber Herr Muster,<o:p></o:p></p>
 <p class="MsoNormal">können Sie die Anwesenheitsliste mitbringen?<o:p></o:p></p>
 <div style="border:none;border-top:solid #E1E1E1 1.0pt;padding:3.0pt 0cm 0cm 0cm">
-<p class="MsoNormal"><b>Von:</b> KAUFMANN David &lt;david.kaufmann@bildung-wien.gv.at&gt; <br>
+<p class="MsoNormal"><b>Von:</b> MUSTER Max &lt;max.muster@example.org&gt; <br>
 <b>Gesendet:</b> Freitag, 9. Oktober 2026 16:02<br>
-<b>An:</b> Berger Anna &lt;anna.berger@bildung-wien.gv.at&gt;<br>
+<b>An:</b> Berger Anna &lt;anna.berger@example.org&gt;<br>
 <b>Betreff:</b> AW: Termin Elternabend<o:p></o:p></p></div>
 <p class="MsoNormal">Donnerstag 18 Uhr geht bei mir.<o:p></o:p></p>
 <div style="border:none;border-top:solid #E1E1E1 1.0pt;padding:3.0pt 0cm 0cm 0cm">
-<p class="MsoNormal"><b>Von:</b> Berger Anna &lt;anna.berger@bildung-wien.gv.at&gt; <br>
+<p class="MsoNormal"><b>Von:</b> Berger Anna &lt;anna.berger@example.org&gt; <br>
 <b>Gesendet:</b> Freitag, 9. Oktober 2026 11:40<br>
-<b>An:</b> KAUFMANN David &lt;david.kaufmann@bildung-wien.gv.at&gt;<br>
+<b>An:</b> MUSTER Max &lt;max.muster@example.org&gt;<br>
 <b>Betreff:</b> Termin Elternabend<o:p></o:p></p></div>
 <p class="MsoNormal">Wann passt Ihnen der Elternabend?<o:p></o:p></p>
 </div></body></html>`;
@@ -43,7 +43,7 @@ const OWA_REPLY = `<div dir="ltr">Danke, erledigt!</div>
 <div id="appendonsend"></div>
 <hr style="display:inline-block;width:98%" tabindex="-1">
 <div id="divRplyFwdMsg" dir="ltr"><font face="Calibri, sans-serif"><b>Von:</b> Berger Anna<br>
-<b>Gesendet:</b> Montag, 12. Oktober 2026 09:14<br><b>An:</b> KAUFMANN David<br>
+<b>Gesendet:</b> Montag, 12. Oktober 2026 09:14<br><b>An:</b> MUSTER Max<br>
 <b>Betreff:</b> Liste</font><div>&nbsp;</div></div>
 <div>Bitte die Liste schicken.</div>`;
 
@@ -68,9 +68,9 @@ describe('bodyText', () => {
 			subject: 'AW: AW: AW: Termin Elternabend'
 		});
 		expect(body.newText).toBe(
-			'Hallo Frau Berger,\n\npasst, ich bringe die Unterlagen am Donnerstag mit.\n\nLG David'
+			'Hallo Frau Berger,\n\npasst, ich bringe die Unterlagen am Donnerstag mit.\n\nLG Max'
 		);
-		expect(body.text).toContain('Von: Berger Anna <anna.berger@bildung-wien.gv.at>');
+		expect(body.text).toContain('Von: Berger Anna <anna.berger@example.org>');
 		expect(body.text).toContain('Wann passt Ihnen der Elternabend?');
 		expect(body.text).not.toMatch(/&lt;|&gt;|&nbsp;/);
 	});
@@ -174,7 +174,7 @@ describe('previews', () => {
 	it('shows only the new text of a reply, on one line', () => {
 		const body = bodyText({ html: OUTLOOK_CHAIN, text: '', subject: 'AW: Termin' });
 		expect(previewOf(body)).toBe(
-			'Hallo Frau Berger, passt, ich bringe die Unterlagen am Donnerstag mit. LG David'
+			'Hallo Frau Berger, passt, ich bringe die Unterlagen am Donnerstag mit. LG Max'
 		);
 	});
 
@@ -182,6 +182,37 @@ describe('previews', () => {
 		const preview = previewOf({ text: 'Wort '.repeat(100), newText: null });
 		expect(preview.length).toBeLessThanOrEqual(200);
 		expect(preview.endsWith('…')).toBe(true);
+	});
+
+	it('cuts Exchange previews at quote headers the 255-character cut left incomplete', () => {
+		const lead =
+			'Hallo Max, ich hoffe, du bist gut zurück! Gibt es schon Neuigkeiten zum Angebot? Du wolltest ' +
+			'ja beim Lieferanten wegen der offenen Positionen nachfragen. Liebe Grüße, Anna';
+		const cut = `${lead} Von: MUSTER Max &lt;max.muster@example.org&gt; Gesendet: Montag`.slice(
+			0,
+			255
+		);
+		expect(previewOfCollapsed(cut, 'AW: Angebot')).toBe(lead);
+		const ticket =
+			'Hallo Max, der alte Eintrag hatte noch eine Referenz auf ein anderes Konto. Diese habe ich ' +
+			'entfernt – kannst du es bitte erneut versuchen? LG Tom Am Montag, 12. Oktober 2026 ' +
+			'um 12:39:27, schrieb Support Beispiel GmbH via Helpdesk Beispiel GmbH <support@example.com>';
+		expect(previewOfCollapsed(ticket.slice(0, 255), 'RE: Eintrag')).toMatch(/LG Tom$/);
+		const long = 'Am 15. Oktober findet die Sitzung statt. '.repeat(7).slice(0, 255);
+		expect(previewOfCollapsed(long, 'Sitzung').startsWith('Am 15. Oktober')).toBe(true);
+	});
+
+	it('decodes entities in Exchange previews', () => {
+		expect(previewOfCollapsed('Preis &lt; 100 &amp; &quot;netto&quot;', 'Angebot')).toBe(
+			'Preis < 100 & "netto"'
+		);
+	});
+
+	it('converts HTML sent as plain text', () => {
+		const text = '<html><body><p>Ihr Kontoauszug<br />ist bereit.</p></body></html>';
+		expect(previewOf(bodyText({ html: null, text, subject: 'Statement' }))).toBe(
+			'Ihr Kontoauszug ist bereit.'
+		);
 	});
 
 	it('cuts collapsed Exchange previews at the quote', () => {
@@ -193,7 +224,7 @@ describe('previews', () => {
 		).toBe('Danke, passt!');
 		expect(
 			previewOfCollapsed(
-				'Danke! Von: Anna Berger <a@b.at> Gesendet: Montag, 12. Oktober 2026 An: David',
+				'Danke! Von: Anna Berger <a@b.at> Gesendet: Montag, 12. Oktober 2026 An: Max',
 				'AW: x'
 			)
 		).toBe('Danke!');

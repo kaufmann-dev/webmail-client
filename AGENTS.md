@@ -55,9 +55,12 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
     when there is one: decoded entities, Markdown data tables, `[image: name]`, and the new text
     without quoted messages (`ReadMessage.newText`, by quote containers first, then text patterns;
     forwards keep everything), plus list previews. `messagePreviews` reads only the start of the
-    IMAP text part, or Exchange's `item:Preview`.
-  - `conversations.ts`: groups a listed page by conversation (provider conversation ID, else
-    Message-ID / In-Reply-To / References), with Sent messages joining for `last_from_me`.
+    IMAP text part, or Exchange's `item:Preview` (entities decoded, quote headers cut even where
+    Exchange's 255-character cut left them incomplete).
+  - `conversations.ts`: groups a listed page by conversation (the provider's conversation ID where
+    there is one, else Message-ID / In-Reply-To / References). The other members come from
+    `conversationMembers` in `messages.ts`, which searches the same sources as `getThread`, so
+    counts and `last_from_me` agree with `get_thread`.
   - `threading.ts`: pure reply and forward header logic, the HTML quote and forward block, and
     `composeBody` (text, `wm-signature` block, `wm-quote` block).
   - `invitations.ts`: pure calendar invitation parsing and iMIP replies (ical.js);

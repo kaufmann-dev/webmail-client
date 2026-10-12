@@ -1,3 +1,4 @@
+import { decodeHTML } from 'entities';
 import { compile, type DomNode, type FormatCallback } from 'html-to-text';
 import type { BlockTextBuilder, TablePrinterCell } from 'html-to-text/lib/block-text-builder';
 
@@ -277,6 +278,14 @@ export function isForwardSubject(subject: string): boolean {
 	return FORWARD.test(subject);
 }
 
+/** Text parts that are really HTML, as some senders put it in `text/plain`. */
+function looksLikeHtml(text: string): boolean {
+	return (
+		/^\s*<(?:!doctype|html|head|body|div|p|table)\b/i.test(text) ||
+		(text.match(/<br\s*\/?>/gi)?.length ?? 0) > 2
+	);
+}
+
 /**
  * The plain text of a message body and its new text without quoted messages. HTML is preferred:
  * its quote containers (Outlook, Gmail, Thunderbird, Apple Mail, this app) mark quotes before any
@@ -289,7 +298,8 @@ export function bodyText(input: {
 	/** File names of embedded images by Content-ID. */
 	images?: Map<string, string>;
 }): BodyText {
-	const raw = input.html ? htmlText(input.html, input.images ?? new Map()) : input.text;
+	const html = input.html ?? (looksLikeHtml(input.text) ? input.text : null);
+	const raw = html ? htmlText(html, input.images ?? new Map()) : input.text;
 	const text = normalizeText(raw.replaceAll(QUOTE_MARK, ''));
 	if (isForwardSubject(input.subject)) return { text, newText: null };
 	const mark = raw.indexOf(QUOTE_MARK);
@@ -316,9 +326,37 @@ export function previewOf(body: BodyText): string {
 	return previewLine(body.newText ?? body.text);
 }
 
-/** The preview from text whose whitespace the server already collapsed (Exchange `Preview`). */
+/** Exchange cuts its preview at this many characters, often inside a quote header. */
+const COLLAPSED_LIMIT = 255;
+/** How close to the cut a quote header may start and still be recognized without its end. */
+const CUT_HEADER_CHARS = 120;
+
+/** Starts of quote headers that the server's cut may have left incomplete. */
+const CUT_PATTERNS = [
+	/(?<!\S)\*?(?:Von|From|De|Da)\*?:\s/,
+	/(?<!\S)(?:Am|On)\s(?=[^\n]*\d)/,
+	/(?<!\S)(?:_{8,}|-{5,})/
+];
+
+/** Where a quote header starts that the cut at `COLLAPSED_LIMIT` left without its end, or -1. */
+function cutQuoteIndex(text: string): number {
+	if (text.length < COLLAPSED_LIMIT - 15) return -1;
+	const tail = Math.max(1, text.length - CUT_HEADER_CHARS);
+	const hits = CUT_PATTERNS.map((pattern) => {
+		const index = text.slice(tail).search(pattern);
+		return index < 0 ? -1 : tail + index;
+	}).filter((index) => index >= 0);
+	return hits.length ? Math.min(...hits) : -1;
+}
+
+/**
+ * The preview from Exchange's `Preview`: the start of the body as one line, with HTML entities,
+ * cut after 255 characters. Quote headers are recognized whole, or near the cut by their start.
+ */
 export function previewOfCollapsed(text: string, subject: string): string {
-	const clean = normalizeText(text);
-	const index = isForwardSubject(subject) ? -1 : quoteIndex(clean, { collapsed: true });
+	const clean = normalizeText(decodeHTML(text));
+	if (isForwardSubject(subject)) return previewLine(clean);
+	let index = quoteIndex(clean, { collapsed: true });
+	if (index < 0) index = cutQuoteIndex(clean);
 	return previewLine(index >= 0 ? above(clean, index) : clean);
 }

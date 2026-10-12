@@ -125,8 +125,12 @@ export function restriction(filters: MessageFilters): string | null {
 	return conditions.length === 1 ? conditions[0] : `<t:And>${conditions.join('')}</t:And>`;
 }
 
-function quoted(value: string): string {
-	return `"${value.replace(/"/g, '').trim()}"`;
+/**
+ * A field value as AQS words in parentheses, which match anywhere in the field. A quoted phrase
+ * only matches the whole value on some servers ("Budget" misses "AW: Budget").
+ */
+function words(value: string): string {
+	return `(${value.replace(/[()"]/g, ' ').replace(/\s+/g, ' ').trim()})`;
 }
 
 /** An AQS date: month/day/year, as the en-US mailbox culture of every request reads it. */
@@ -143,9 +147,9 @@ export function queryString(filters: MessageFilters): string | null {
 	if (!query && !filters.from && !filters.to && !filters.subject) return null;
 	const parts: string[] = [];
 	if (query) parts.push(query);
-	if (filters.from) parts.push(`from:${quoted(filters.from)}`);
-	if (filters.to) parts.push(`to:${quoted(filters.to)}`);
-	if (filters.subject) parts.push(`subject:${quoted(filters.subject)}`);
+	if (filters.from) parts.push(`from:${words(filters.from)}`);
+	if (filters.to) parts.push(`to:${words(filters.to)}`);
+	if (filters.subject) parts.push(`subject:${words(filters.subject)}`);
 	const unread = unreadWanted(filters);
 	if (unread !== undefined) parts.push(`isread:${!unread}`);
 	const starred = starredWanted(filters);
@@ -263,14 +267,17 @@ export function deleteItems(ids: string[]): string {
 	return `<m:DeleteItem DeleteType="HardDelete"><m:ItemIds>${itemIds(ids)}</m:ItemIds></m:DeleteItem>`;
 }
 
-export function conversationItems(conversationId: string): string {
+/** The items of conversations outside Deleted Items and Junk, one response message each. */
+export function conversationItems(conversationIds: string[]): string {
+	const conversations = conversationIds
+		.map((id) => `<t:Conversation><t:ConversationId Id="${escapeXml(id)}"/></t:Conversation>`)
+		.join('');
 	return (
 		'<m:GetConversationItems><m:ItemShape><t:BaseShape>IdOnly</t:BaseShape>' +
-		fields(SUMMARY_FIELDS) +
+		fields(THREAD_FIELDS) +
 		'</m:ItemShape><m:FoldersToIgnore><t:DistinguishedFolderId Id="deleteditems"/>' +
 		'<t:DistinguishedFolderId Id="junkemail"/></m:FoldersToIgnore>' +
-		`<m:Conversations><t:Conversation><t:ConversationId Id="${escapeXml(conversationId)}"/>` +
-		'</t:Conversation></m:Conversations></m:GetConversationItems>'
+		`<m:Conversations>${conversations}</m:Conversations></m:GetConversationItems>`
 	);
 }
 

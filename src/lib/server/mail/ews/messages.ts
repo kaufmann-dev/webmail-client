@@ -347,6 +347,36 @@ export async function deleteItems(account: MailAccount, ids: string[]): Promise<
 	}
 }
 
+/** Conversations per GetConversationItems request. */
+const CONVERSATIONS_PER_REQUEST = 25;
+
+/** The messages of conversations, oldest first, in any folder but Deleted Items and Junk. */
+export async function conversations(
+	account: MailAccount,
+	conversationIds: string[]
+): Promise<MessageSummary[]> {
+	if (!conversationIds.length) return [];
+	const { pathById } = await ewsFolders(account);
+	const found: MessageSummary[] = [];
+	for (let i = 0; i < conversationIds.length; i += CONVERSATIONS_PER_REQUEST) {
+		const chunk = conversationIds.slice(i, i + CONVERSATIONS_PER_REQUEST);
+		for (const response of await ewsCall(account, request.conversationItems(chunk))) {
+			if (failed(response)) continue;
+			const nodes = list(
+				child(child(response, 'Conversation'), 'ConversationNodes')?.ConversationNode
+			);
+			for (const node of nodes) {
+				for (const { node: item } of itemsOf(child(node, 'Items'))) {
+					const path = pathById.get(attr(child(item, 'ParentFolderId'), 'Id'));
+					if (path) found.push(summaryOf(account.id, path, item, 0));
+				}
+			}
+		}
+	}
+	await resolveAddresses(account, summaries(found));
+	return found.sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
+}
+
 /** The conversation around a message, oldest first, from Exchange's own conversation index. */
 export async function getThread(
 	account: MailAccount,
@@ -357,18 +387,5 @@ export async function getThread(
 		request.getItems([locator.itemId], ['item:ConversationId'])
 	);
 	const conversationId = attr(child(firstItem(check(message))?.node, 'ConversationId'), 'Id');
-	if (!conversationId) return [];
-	const { pathById } = await ewsFolders(account);
-	const [response] = await ewsCall(account, request.conversationItems(conversationId));
-	const nodes = list(
-		child(child(check(response), 'Conversation'), 'ConversationNodes')?.ConversationNode
-	);
-	const thread = nodes.flatMap((node) =>
-		itemsOf(child(node, 'Items')).flatMap(({ node: item }) => {
-			const path = pathById.get(attr(child(item, 'ParentFolderId'), 'Id'));
-			return path ? [summaryOf(account.id, path, item, 0)] : [];
-		})
-	);
-	await resolveAddresses(account, summaries(thread));
-	return thread.sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
+	return conversationId ? conversations(account, [conversationId]) : [];
 }

@@ -4,14 +4,15 @@ import type { MessageSummary } from '../../mail-types';
 export interface Conversation {
 	/** The conversation's messages in the listed folder, newest first. */
 	listed: MessageSummary[];
-	/** Every known message, listed and from Sent, oldest first. */
+	/** Every known message of the conversation, in any folder, oldest first. */
 	messages: MessageSummary[];
 }
 
 /**
  * Groups a listed page by conversation. Messages belong together when they share the provider's
- * conversation ID (Exchange, Gmail) or are linked by Message-ID, In-Reply-To, and References.
- * `related` (the Sent folder) only joins conversations that have a listed message. Conversations
+ * conversation ID (Exchange, Gmail) or, without one, are linked by Message-ID, In-Reply-To, and
+ * References. `related` (from `conversationMembers`) only joins conversations that have a listed
+ * message. Conversations
  * keep the order of their newest listed message.
  */
 export function groupConversations(
@@ -36,13 +37,15 @@ export function groupConversations(
 		const node = `ref:${message.ref}`;
 		find(node);
 		const scope = message.accountId;
-		const ids = [
-			message.messageId,
-			message.thread?.inReplyTo,
-			...(message.thread?.references ?? [])
-		].filter((id): id is string => Boolean(id));
-		for (const id of ids) union(node, `id:${scope}:${id}`);
-		if (message.thread?.id) union(node, `thread:${scope}:${message.thread.id}`);
+		if (message.messageId) union(node, `id:${scope}:${message.messageId}`);
+		// The provider's conversation is authoritative, as in `getThread`: Gmail keeps replies
+		// with a new subject apart even when their headers link them.
+		if (message.thread?.id) {
+			union(node, `thread:${scope}:${message.thread.id}`);
+			continue;
+		}
+		const ids = [message.thread?.inReplyTo, ...(message.thread?.references ?? [])];
+		for (const id of ids) if (id) union(node, `id:${scope}:${id}`);
 	}
 
 	const groups = new Map<string, Conversation>();

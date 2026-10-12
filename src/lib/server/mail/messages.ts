@@ -75,9 +75,10 @@ export function referencesOf(headers: Buffer | undefined): string[] {
 	return value.match(MESSAGE_ID) ?? [];
 }
 
-function threadKeys(message: FetchMessageObject): ThreadKeys {
+/** Only Gmail's thread ID is used; other servers' THREADID would disagree with `getThread`. */
+function threadKeys(account: MailAccount, message: FetchMessageObject): ThreadKeys {
 	return {
-		id: message.threadId ?? null,
+		id: account.provider === 'gmail' ? (message.threadId ?? null) : null,
 		inReplyTo: message.envelope?.inReplyTo ?? null,
 		references: referencesOf(message.headers)
 	};
@@ -130,7 +131,7 @@ function toSummary(
 		draft: flags.has('\\Draft'),
 		hasAttachments: hasAttachment(message.bodyStructure),
 		messageId: envelope.messageId ?? null,
-		...(message.headers || message.threadId ? { thread: threadKeys(message) } : {})
+		...(message.headers || message.threadId ? { thread: threadKeys(account, message) } : {})
 	};
 }
 
@@ -779,10 +780,110 @@ export async function deleteMessages(groups: RefGroup[]): Promise<void> {
 	}
 }
 
+/** Criteria per IMAP SEARCH; IMAP ORs only two keys at a time, so the query nests. */
+const CRITERIA_PER_SEARCH = 25;
+/** Conversation members fetched at most per folder. */
+const MAX_MEMBERS = 500;
+
+/**
+ * Messages in the given folders matching any of the criteria, with conversation keys, oldest
+ * last. The same message in several folders is found once per folder.
+ */
+async function searchFolders(
+	account: MailAccount,
+	paths: string[],
+	criteria: SearchObject[]
+): Promise<MessageSummary[]> {
+	const found: MessageSummary[] = [];
+	if (!criteria.length) return found;
+	for (const path of paths) {
+		await withMailbox(account, path, async (client, mailbox) => {
+			const uids = new Set<number>();
+			for (let i = 0; i < criteria.length; i += CRITERIA_PER_SEARCH) {
+				const chunk = criteria.slice(i, i + CRITERIA_PER_SEARCH);
+				const query: SearchObject = chunk.length === 1 ? chunk[0] : { or: chunk };
+				for (const uid of (await client.search(query, { uid: true })) || []) uids.add(uid);
+			}
+			const picked = [...uids].sort((a, b) => a - b).slice(-MAX_MEMBERS);
+			if (!picked.length) return;
+			for (const message of await client.fetchAll(picked, THREAD_FETCH, { uid: true })) {
+				found.push(toSummary(account, path, mailbox, message));
+			}
+		});
+	}
+	return found;
+}
+
+/**
+ * Header searches for the conversations of these messages (servers without conversation IDs):
+ * the messages they refer to, and the replies that refer to them by References or only by
+ * In-Reply-To (as automatic replies often do).
+ */
+export function conversationCriteria(
+	messages: { messageId: string | null; inReplyTo: string | null; references: string[] }[]
+): SearchObject[] {
+	const criteria = new Map<string, SearchObject>();
+	const add = (name: string, value: string) =>
+		criteria.set(`${name} ${value}`, { header: { [name]: value } });
+	for (const message of messages) {
+		const ids = [...message.references.slice(-20), message.inReplyTo, message.messageId];
+		for (const id of ids) if (id) add('message-id', id);
+		if (message.messageId) {
+			add('references', message.messageId);
+			add('in-reply-to', message.messageId);
+		}
+	}
+	return [...criteria.values()];
+}
+
+async function rolePaths(account: MailAccount, roles: readonly string[]): Promise<string[]> {
+	const paths: string[] = [];
+	for (const role of roles) {
+		const path = await resolveFolder(account, role);
+		if (path && !paths.includes(path)) paths.push(path);
+	}
+	return paths;
+}
+
+/** Folders whose messages make up a conversation where the server has no conversation index. */
+const THREAD_ROLES = ['inbox', 'sent', 'archive'] as const;
+
+/**
+ * All messages of the conversations of listed messages (from `listMessages` with `threads`),
+ * from every folder `getThread` would search, so both count the same messages: Exchange's
+ * conversation index, Gmail's All Mail by X-GM-THRID, elsewhere Inbox, Sent, and Archive by
+ * Message-ID headers.
+ */
+export async function conversationMembers(
+	account: MailAccount,
+	listed: MessageSummary[]
+): Promise<MessageSummary[]> {
+	const ids = [...new Set(listed.map((m) => m.thread?.id).filter((id): id is string => !!id))];
+	if (account.provider === 'exchange') return ews.conversations(account, ids);
+	if (account.provider === 'gmail') {
+		const allMail = await resolveFolder(account, 'archive');
+		if (!allMail || !ids.length) return [];
+		return searchFolders(
+			account,
+			[allMail],
+			ids.map((threadId) => ({ threadId }))
+		);
+	}
+	const criteria = conversationCriteria(
+		listed.map((m) => ({
+			messageId: m.messageId,
+			inReplyTo: m.thread?.inReplyTo ?? null,
+			references: m.thread?.references ?? []
+		}))
+	);
+	return searchFolders(account, await rolePaths(account, THREAD_ROLES), criteria);
+}
+
 /**
  * The conversation around a message, oldest first. Exchange keeps its own conversation index;
- * Gmail threads come from X-GM-THRID in All Mail; elsewhere, Inbox, Sent, and Archive are searched
- * for the Message-ID chain in both directions.
+ * Gmail threads come from X-GM-THRID in All Mail, addressed in Inbox or Sent where they are
+ * there too (archiving and moving act on those copies); elsewhere, Inbox, Sent, and Archive are
+ * searched for the Message-ID chain in both directions.
  */
 export async function getThread(
 	account: MailAccount,
@@ -791,45 +892,21 @@ export async function getThread(
 ): Promise<MessageSummary[]> {
 	if (account.provider === 'exchange') return ews.getThread(account, ewsLocator(messageLocator));
 	const locator = imapLocator(messageLocator);
-	const found = new Map<string, MessageSummary>();
-	const add = (summary: MessageSummary) => found.set(summary.messageId ?? summary.ref, summary);
-
+	let found: MessageSummary[];
 	if (account.provider === 'gmail') {
 		const threadId = await withMailbox(account, locator.path, async (client) => {
 			const message = await client.fetchOne(String(locator.uid), { threadId: true }, { uid: true });
 			return message ? message.threadId : undefined;
 		});
-		const allMail = await resolveFolder(account, 'archive');
-		if (threadId && allMail) {
-			await withMailbox(account, allMail, async (client, mailbox) => {
-				const uids = (await client.search({ threadId }, { uid: true })) || [];
-				if (!uids.length) return;
-				for (const message of await client.fetchAll(uids, SUMMARY_FETCH, { uid: true })) {
-					add(toSummary(account, allMail, mailbox, message));
-				}
-			});
-		}
+		const paths = await rolePaths(account, ['archive', 'sent', 'inbox']);
+		found = threadId ? await searchFolders(account, paths, [{ threadId }]) : [];
 	} else {
-		const ids = [
-			...new Set([...detail.references, detail.inReplyTo, detail.messageId].filter(Boolean))
-		].slice(-20) as string[];
-		const criteria: SearchObject[] = ids.map((id) => ({ header: { 'message-id': id } }));
-		if (detail.messageId) criteria.push({ header: { references: detail.messageId } });
-		if (!criteria.length) return [];
-		const query: SearchObject = criteria.length === 1 ? criteria[0] : { or: criteria };
-		for (const role of ['inbox', 'sent', 'archive'] as const) {
-			const path = await resolveFolder(account, role);
-			if (!path) continue;
-			await withMailbox(account, path, async (client, mailbox) => {
-				const uids = (await client.search(query, { uid: true })) || [];
-				if (!uids.length) return;
-				for (const message of await client.fetchAll(uids, SUMMARY_FETCH, { uid: true })) {
-					add(toSummary(account, path, mailbox, message));
-				}
-			});
-		}
+		const criteria = conversationCriteria([detail]);
+		found = await searchFolders(account, await rolePaths(account, THREAD_ROLES), criteria);
 	}
-	return [...found.values()].sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
+	// Later folders win: a Gmail message in Inbox is addressed there rather than in All Mail.
+	const unique = new Map(found.map((summary) => [summary.messageId ?? summary.ref, summary]));
+	return [...unique.values()].sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
 }
 
 /** Bytes read from the start of a body part for a list preview. */

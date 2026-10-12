@@ -153,8 +153,8 @@ moves. The tools are built for an AI reviewing a mailbox in few calls and few to
 
 - **Lists:** each message has a one-line `preview` of its new text without quotes
   (`include_preview: false` turns it off). `group_by: "thread"` returns one entry per
-  conversation with participants, counts, the last sender, `last_from_me` (looked up in Sent), and
-  the preview of the latest message.
+  conversation with participants, counts, the last sender, `last_from_me`, and the preview of the
+  latest message. Counts and the last sender cover all folders, as `get_thread` does.
 - **Bodies:** plain text converted from the HTML, with tables as Markdown and embedded images as
   `[image: name]`. `get_message` with `include_quoted: false` and `get_thread` (by default) return
   only each message's new text; forwards keep the forwarded message.

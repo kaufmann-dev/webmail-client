@@ -70,6 +70,7 @@
 		"@lucide/svelte": "^1.51.0",
 		"@modelcontextprotocol/server": "2.3.0",
 		"better-auth": "1.7.7",
+		"entities": "8.1.0",
 		"fast-xml-parser": "^5.11.2",
 		"html-to-text": "^10.0.1",
 		"ical.js": "^2.2.1",

@@ -20,10 +20,11 @@ import {
 } from '../mail/compose';
 import { parseAddressList } from '../mail/addresses';
 import { groupConversations, type Conversation } from '../mail/conversations';
-import { MailError } from '../mail/errors';
+import { errorMessage, MailError } from '../mail/errors';
 import { getFolders, resolveFolder } from '../mail/folders';
 import { decodeMessageRef, InvalidMessageRefError } from '../mail/message-ref';
 import {
+	conversationMembers,
 	findMessage,
 	getAttachment,
 	getMessage,
@@ -132,8 +133,6 @@ const MAX_BODY_CHARS = 100_000;
 const MAX_THREAD_BODY_CHARS = 20_000;
 const MAX_THREAD_MESSAGES = 30;
 const MAX_PARTICIPANTS = 10;
-const SENT_LOOKUP_LIMIT = 200;
-const DAY_MS = 24 * 60 * 60_000;
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 
 const messageRef = z.string().min(1).describe('A message_ref from a listing tool.');
@@ -308,12 +307,11 @@ export function createMcpServer(
 		.describe('A role (inbox, drafts, sent, archive, spam, trash) or a folder path.');
 
 	/**
-	 * Sent messages of the conversations on a page, from the oldest listed message on: enough to
-	 * see whether the user answered last. Listing Sent itself needs none.
+	 * The other messages of the conversations on a page, from the same sources as get_thread, so
+	 * counts and the last sender agree with it. Messages outside the time window are left out.
 	 */
-	async function sentMessages(
+	async function relatedMessages(
 		accounts: MailAccount[],
-		folder: string,
 		listed: MessageSummary[]
 	): Promise<{ messages: MessageSummary[]; errors: { accountId: string; message: string }[] }> {
 		const found: MessageSummary[] = [];
@@ -322,22 +320,14 @@ export function createMcpServer(
 			accounts.map(async (account) => {
 				const own = listed.filter((m) => m.accountId === account.id);
 				if (!own.length) return;
-				const [path, sent] = await Promise.all([
-					resolveFolder(account, folder),
-					resolveFolder(account, 'sent')
-				]);
-				if (!sent || path === sent) return;
-				const oldest = Math.min(...own.map((m) => Date.parse(m.date) || 0));
-				const page = await listMessages(
-					[account],
-					sent,
-					{ since: new Date(oldest - DAY_MS) },
-					null,
-					SENT_LOOKUP_LIMIT,
-					{ notBefore: access.notBefore([account]), threads: true }
-				);
-				found.push(...page.messages);
-				errors.push(...page.errors.map((e) => ({ ...e, message: `Sent folder: ${e.message}` })));
+				try {
+					found.push(...access.visible(await conversationMembers(account, own)));
+				} catch (error) {
+					errors.push({
+						accountId: account.id,
+						message: `Conversations incomplete: ${errorMessage(error)}`
+					});
+				}
 			})
 		);
 		return { messages: found, errors };
@@ -439,9 +429,9 @@ export function createMcpServer(
 
 		let conversations: Conversation[] | null = null;
 		if (threads) {
-			const sent = await sentMessages(accounts, folder, page.messages);
-			errors.push(...sent.errors);
-			conversations = groupConversations(page.messages, sent.messages);
+			const related = await relatedMessages(accounts, page.messages);
+			errors.push(...related.errors);
+			conversations = groupConversations(page.messages, related.messages);
 		}
 		const previewed = conversations ? conversations.map((c) => c.messages.at(-1)!) : page.messages;
 		const previews = options.includePreview ? await previewsOf(previewed) : null;
@@ -492,11 +482,14 @@ export function createMcpServer(
 		{
 			title: 'List messages',
 			description:
-				'Lists messages in a folder, newest first, each with a preview of its new text. ' +
-				'Omit account to list all granted accounts merged by date. ' +
-				'With group_by "thread", returns one entry per conversation: participants, counts, the last ' +
-				'sender (last_from_me when the user answered last), the preview of the latest message, and the ' +
-				'message_refs of its messages in this folder.',
+				'Lists messages in a folder, newest first. Omit account to list all granted accounts merged by date. ' +
+				'Parameters beyond the folder: group_by "thread" (default "message") returns one entry per ' +
+				'conversation with participants, message_count and unread_count, the last sender and last_from_me ' +
+				'(true when the user sent the last message, from all folders including Sent), and the message_refs ' +
+				'of its messages in this folder; message_count matches get_thread. include_preview (default true) ' +
+				'adds a one-line preview of each message\'s new text without quotes (with group_by "thread", of ' +
+				'the latest message); set it to false for shorter results. limit (default 25, up to 100) counts ' +
+				'messages, cursor continues with next_cursor.',
 			inputSchema: z.object({
 				account: accountRef.optional(),
 				folder: folderArg,
@@ -521,8 +514,10 @@ export function createMcpServer(
 		{
 			title: 'Search messages',
 			description:
-				'Searches one folder (default inbox; use "archive" for Gmail All Mail) by text and fields, newest first, ' +
-				'with the same output and group_by option as list_messages. For Gmail, query accepts Gmail search syntax.',
+				'Searches one folder (default inbox; use "archive" for Gmail All Mail) by text and fields, newest first. ' +
+				'from, to, and subject match words anywhere in the field. For Gmail, query accepts Gmail search syntax. ' +
+				'Takes the same group_by ("message" or "thread"), include_preview (default true), limit, and cursor ' +
+				'parameters as list_messages and returns the same output.',
 			inputSchema: z.object({
 				query: z
 					.string()
@@ -564,7 +559,8 @@ export function createMcpServer(
 			description:
 				"Returns a message's headers, plain-text body, attachment list (unless the account withholds attachments), " +
 				'and calendar invitation if it carries one. Does not mark it as read. ' +
-				'Set include_quoted to false for only the new text of a reply.',
+				'Parameter include_quoted (default true): false returns only the new text of a reply, without the ' +
+				'quoted earlier messages, and sets quoted_removed. For a whole conversation use get_thread instead.',
 			inputSchema: z.object({
 				message_ref: messageRef,
 				include_quoted: z
@@ -621,6 +617,7 @@ export function createMcpServer(
 			title: 'Get conversation',
 			description:
 				'Returns the whole conversation a message belongs to (received and sent, all folders), oldest first, ' +
+				'with its message_count; ' +
 				"each message with its body. By default each body is only that message's new text, since the earlier " +
 				"messages are listed too. Messages outside the account's time window are left out; long conversations " +
 				'return the newest 30.',
@@ -648,6 +645,7 @@ export function createMcpServer(
 				const own = account.email;
 				return {
 					subject: baseSubject(read.detail.subject),
+					message_count: thread.length,
 					...(thread.length > shown.length && {
 						earlier_messages_omitted: thread.length - shown.length
 					}),
