@@ -55,7 +55,7 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
     when there is one: decoded entities, Markdown data tables, `[image: name]`, and the new text
     without quoted messages (`ReadMessage.newText`, by quote containers first, then text patterns;
     forwards keep everything), plus list previews. `messagePreviews` reads only the start of the
-    IMAP text part, or Exchange's `item:Preview` (entities decoded, quote headers cut even where
+    IMAP text part, or Exchange's `item:Preview` (plain text; quote headers cut even where
     Exchange's 255-character cut left them incomplete).
   - `conversations.ts`: groups a listed page by conversation (the provider's conversation ID where
     there is one, else Message-ID / In-Reply-To / References). The other members come from

@@ -111,10 +111,10 @@ describe('bodyText', () => {
 		);
 	});
 
-	it('decodes entities that the sender encoded twice', () => {
+	it('decodes entities once, as mail programs show them', () => {
 		const html = '<blockquote>Von MUSTER Max &amp;lt;max@example.org&amp;gt;:</blockquote>';
 		expect(bodyText({ html, text: '', subject: '' }).text).toBe(
-			'> Von MUSTER Max <max@example.org>:'
+			'> Von MUSTER Max &lt;max@example.org&gt;:'
 		);
 	});
 
@@ -209,10 +209,8 @@ describe('previews', () => {
 		expect(previewOfCollapsed(long, 'Sitzung').startsWith('Am 15. Oktober')).toBe(true);
 	});
 
-	it('decodes entities in Exchange previews', () => {
-		expect(previewOfCollapsed('Preis &lt; 100 &amp; &quot;netto&quot;', 'Angebot')).toBe(
-			'Preis < 100 & "netto"'
-		);
+	it('keeps Exchange previews as the plain text they are', () => {
+		expect(previewOfCollapsed('Preis &lt; 100', 'Angebot')).toBe('Preis &lt; 100');
 	});
 
 	it('converts HTML sent as plain text', () => {
