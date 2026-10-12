@@ -9,7 +9,7 @@ import { requireFolder, resolveFolder } from './folders';
 import { withClient, withMailbox } from './imap';
 import { findCalendarPart, invitationReply } from './invitations';
 import { encodeMessageRef } from './message-ref';
-import { deleteMessages, getMessage, groupRefs, resolveRef } from './messages';
+import { deleteMessages, getAttachments, getMessage, groupRefs, resolveRef } from './messages';
 import { PROVIDER_CONFIG } from './providers';
 import { createSmtpTransport } from './smtp';
 import {
@@ -70,7 +70,7 @@ async function loadOriginal(userId: string, ref: string) {
 		date: parsed.date ?? null,
 		text: detail.text
 	};
-	return { account, original, parsed, attachments: detail.attachments };
+	return { account, locator, original, attachments: detail.attachments };
 }
 
 /** A threaded reply: In-Reply-To, References, `Re:` subject, recipients, and the quoted original. */
@@ -105,7 +105,7 @@ export async function prepareForward(
 	ref: string,
 	includeAttachments: boolean
 ): Promise<PreparedDraft> {
-	const { account, original, parsed, attachments } = await loadOriginal(userId, ref);
+	const { account, locator, original, attachments } = await loadOriginal(userId, ref);
 	const suffix = composeBody('', account.signature, forwardedBlock(original));
 	return {
 		suffix,
@@ -120,13 +120,11 @@ export async function prepareForward(
 			inReplyTo: null,
 			references: replyReferences(original),
 			attachments: includeAttachments
-				? parsed.attachments
-						.filter((a) => !a.related)
-						.map((a) => ({
-							filename: a.filename ?? 'attachment',
-							contentType: a.contentType,
-							content: a.content
-						}))
+				? await getAttachments(
+						account,
+						locator,
+						attachments.map((a) => a.partId)
+					)
 				: []
 		}
 	};
@@ -144,7 +142,7 @@ function addressList(value: AddressObject | AddressObject[] | undefined): Addres
 /** A saved draft, back as editable fields; its threading headers are kept. */
 export async function loadDraft(userId: string, ref: string): Promise<Draft> {
 	const { account, locator } = await resolveRef(userId, ref);
-	const { parsed } = await getMessage(account, locator);
+	const { detail, parsed } = await getMessage(account, locator);
 	const references = Array.isArray(parsed.references)
 		? parsed.references
 		: (parsed.references?.split(/\s+/).filter(Boolean) ?? []);
@@ -157,11 +155,11 @@ export async function loadDraft(userId: string, ref: string): Promise<Draft> {
 		text: parsed.text ?? '',
 		inReplyTo: parsed.inReplyTo ?? null,
 		references,
-		attachments: parsed.attachments.map((a) => ({
-			filename: a.filename ?? 'attachment',
-			contentType: a.contentType,
-			content: a.content
-		}))
+		attachments: await getAttachments(
+			account,
+			locator,
+			detail.attachments.map((a) => a.partId)
+		)
 	};
 }
 

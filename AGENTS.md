@@ -39,7 +39,10 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
   `imapflow` or `nodemailer` directly.
   - `imap.ts`: the per-account connection pool (`withClient`, `withMailbox`). It records account
     failures in `mail_account.last_error`.
-  - `messages.ts`: listing, search, reading, moving, and threads.
+  - `messages.ts`: listing, search, reading, moving, and threads. Reading fetches only body text,
+    calendar parts, and embedded images (`structure.ts`); attachments download on demand. Read
+    messages stay in an in-memory cache that `setFlags`, `moveMessages`, and `deleteMessages` keep
+    current.
   - `compose.ts`: drafts and sending.
   - `threading.ts`: pure reply and forward header logic.
   - `invitations.ts`: pure calendar invitation parsing and iMIP replies (ical.js);

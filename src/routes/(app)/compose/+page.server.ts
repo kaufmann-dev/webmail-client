@@ -14,7 +14,7 @@ import { errorMessage, MailError } from '#lib/server/mail/errors.js';
 import { InvalidMessageRefError } from '#lib/server/mail/message-ref.js';
 import {
 	deleteMessages,
-	getAttachment,
+	getAttachments,
 	getMessage,
 	groupRefs,
 	resolveRef
@@ -123,9 +123,9 @@ async function draftFromForm(userId: string, form: FormData) {
 	const carriedRef = text('carriedRef');
 	if (carriedRef) {
 		const { account, locator } = await resolveRef(userId, carriedRef);
-		for (const part of form.getAll('carriedPart')) {
-			carried.push(await getAttachment(account, locator, String(part)));
-		}
+		carried.push(
+			...(await getAttachments(account, locator, form.getAll('carriedPart').map(String)))
+		);
 	}
 	const uploads = await Promise.all(
 		form
@@ -182,13 +182,10 @@ export const actions: Actions = {
 				await request.formData()
 			);
 			const ref = await saveDraft(locals.user.id, draft, replacesDraftRef);
-			// The saved draft now holds every attachment, in order; later saves carry them from it.
-			const carried: AttachmentInfo[] = draft.attachments.map((a, index) => ({
-				partId: String(index),
-				filename: a.filename,
-				contentType: a.contentType,
-				size: a.content.length
-			}));
+			// The saved draft now holds every attachment; later saves carry them from it.
+			const saved = await resolveRef(locals.user.id, ref);
+			const carried: AttachmentInfo[] = (await getMessage(saved.account, saved.locator)).detail
+				.attachments;
 			return { saved: true, draftRef: ref, carried };
 		}),
 	discard: ({ request, locals }) =>

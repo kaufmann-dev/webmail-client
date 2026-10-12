@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { afterNavigate, goto, invalidate } from '$app/navigation';
+	import { afterNavigate, goto, invalidate, preloadData } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { navigating, page } from '$app/state';
 	import { toast } from 'svelte-sonner';
@@ -261,9 +261,17 @@
 		);
 	}
 
+	/** The message below the open one loads ahead, so reading on (`j`) shows it at once. */
+	function preloadNext() {
+		const index = openRef ? messages.findIndex((m) => m.ref === openRef) : -1;
+		const next = index >= 0 ? messages[index + 1] : undefined;
+		if (next) preloadData(hrefFor(next)).catch(() => {});
+	}
+
 	afterNavigate(() => {
 		closing = null;
 		markOpenedRead();
+		preloadNext();
 	});
 
 	// Messages that left the list (moved elsewhere, or beyond the first page after a refresh) drop out.

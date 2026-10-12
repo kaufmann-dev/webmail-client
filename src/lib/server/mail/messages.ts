@@ -22,6 +22,7 @@ import { findCalendarPart, isCalendarPart, parseInvitation } from './invitations
 import { decodeCursor, encodeCursor, mergePages, type AccountPage } from './merge';
 import { decodeMessageRef, encodeMessageRef, type MessageLocator } from './message-ref';
 import { sanitizeEmailHtml, textToHtml } from './render';
+import { assembleSource, planMessage, type StructurePart } from './structure';
 import type { MailAccount } from './types';
 
 export const DEFAULT_PAGE_SIZE = 50;
@@ -201,16 +202,42 @@ function assertSameMailbox(mailbox: MailboxObject, locator: MessageLocator): voi
 	}
 }
 
-async function fetchSource(account: MailAccount, locator: MessageLocator) {
+/** Messages up to this size arrive whole with their structure, in one round trip. */
+const WHOLE_MESSAGE_BYTES = 256 * 1024;
+const DOWNLOAD_CHUNK_BYTES = 16 * 1024 * 1024;
+
+/**
+ * The message's source as far as reading it needs: small messages whole, larger ones rebuilt from
+ * their body text, calendar parts, and embedded images. Attachments stay on the server.
+ */
+async function fetchForReading(account: MailAccount, locator: MessageLocator) {
 	return withMailbox(account, locator.path, async (client, mailbox) => {
 		assertSameMailbox(mailbox, locator);
+		const uid = String(locator.uid);
 		const message = await client.fetchOne(
-			String(locator.uid),
-			{ ...SUMMARY_FETCH, source: true },
+			uid,
+			{ ...SUMMARY_FETCH, size: true, source: { start: 0, maxLength: WHOLE_MESSAGE_BYTES } },
 			{ uid: true }
 		);
 		if (!message || !message.source) throw new MailError('This message no longer exists.', 404);
-		return { message, mailbox };
+		const plan = planMessage(message.bodyStructure);
+		if ((message.size ?? Infinity) <= WHOLE_MESSAGE_BYTES) {
+			return { message, mailbox, plan, source: message.source };
+		}
+		const rest = plan.whole
+			? await client.fetchOne(uid, { source: true }, { uid: true })
+			: await client.fetchOne(uid, { headers: true, bodyParts: plan.fetch }, { uid: true });
+		if (!rest) throw new MailError('This message no longer exists.', 404);
+		const source =
+			plan.whole || !message.bodyStructure
+				? rest.source
+				: assembleSource(
+						rest.headers ?? Buffer.alloc(0),
+						message.bodyStructure,
+						rest.bodyParts ?? new Map()
+					);
+		if (!source) throw new MailError('This message no longer exists.', 404);
+		return { message, mailbox, plan, source };
 	});
 }
 
@@ -233,13 +260,19 @@ function references(parsed: ParsedMail): string[] {
 	return list.filter(Boolean);
 }
 
-/** Fetches and parses one message. Reading never marks it as seen; see `setFlags`. */
-export async function getMessage(
-	account: MailAccount,
-	locator: MessageLocator
-): Promise<{ detail: MessageDetail; parsed: ParsedMail }> {
-	const { message, mailbox } = await fetchSource(account, locator);
-	const parsed = await simpleParser(message.source!);
+export interface ReadMessage {
+	detail: MessageDetail;
+	/** The parsed message without its attachments' content; see `getAttachments`. */
+	parsed: ParsedMail;
+}
+
+function attachmentName(part: StructurePart): string {
+	return part.filename ?? `attachment-${part.partId}`;
+}
+
+async function readMessage(account: MailAccount, locator: MessageLocator): Promise<ReadMessage> {
+	const { message, mailbox, plan, source } = await fetchForReading(account, locator);
+	const parsed = await simpleParser(source);
 	const summary = toSummary(account, locator.path, mailbox, message);
 	const html = parsed.html ? sanitizeEmailHtml(parsed.html) : null;
 	const calendar = findCalendarPart(parsed.attachments);
@@ -259,15 +292,15 @@ export async function getMessage(
 		html: html?.html ?? textToHtml(parsed.text ?? ''),
 		hasRemoteImages: html?.hasRemoteImages ?? false,
 		// An unnamed calendar part is the invitation's machine-readable form, shown as the invitation.
-		attachments: parsed.attachments.flatMap((attachment, index) =>
-			attachment.related || (invitation && !attachment.filename && isCalendarPart(attachment))
+		attachments: plan.attachments.flatMap((part) =>
+			invitation && !part.filename && isCalendarPart(part)
 				? []
 				: [
 						{
-							partId: String(index),
-							filename: attachment.filename ?? `attachment-${index + 1}`,
-							contentType: attachment.contentType,
-							size: attachment.size
+							partId: part.partId,
+							filename: attachmentName(part),
+							contentType: part.contentType,
+							size: part.size
 						}
 					]
 		),
@@ -276,20 +309,115 @@ export async function getMessage(
 	return { detail, parsed };
 }
 
+const CACHE_TTL_MS = 10 * 60_000;
+const CACHE_MAX_BYTES = 64 * 1024 * 1024;
+
+interface CacheEntry {
+	value: Promise<ReadMessage>;
+	read?: ReadMessage;
+	bytes: number;
+	expires: number;
+}
+
+/**
+ * Recently read messages, least recently used first. A UID's content never changes within one
+ * UIDVALIDITY; flags are kept current by `setFlags`, and moved or deleted messages are dropped.
+ */
+const cache = new Map<string, CacheEntry>();
+let cachedBytes = 0;
+
+function cacheKey(accountId: string, path: string, uidValidity: string, uid: number): string {
+	return JSON.stringify([accountId, path, uidValidity, uid]);
+}
+
+function forget(key: string): void {
+	const entry = cache.get(key);
+	if (!entry) return;
+	cache.delete(key);
+	cachedBytes -= entry.bytes;
+}
+
+function readSize({ detail, parsed }: ReadMessage): number {
+	const strings = [detail.html, detail.text, parsed.text, parsed.textAsHtml, parsed.html || ''];
+	const text = strings.reduce((sum, value) => sum + (value?.length ?? 0), 0);
+	return 2 * text + parsed.attachments.reduce((sum, a) => sum + a.content.length, 0);
+}
+
+/**
+ * Fetches and parses one message, from the cache when it was read recently. Reading never marks
+ * it as seen; see `setFlags`.
+ */
+export function getMessage(account: MailAccount, locator: MessageLocator): Promise<ReadMessage> {
+	const key = cacheKey(account.id, locator.path, locator.uidValidity, locator.uid);
+	const hit = cache.get(key);
+	if (hit && hit.expires > Date.now()) {
+		cache.delete(key);
+		cache.set(key, hit);
+		return hit.value;
+	}
+	forget(key);
+	const entry: CacheEntry = {
+		value: readMessage(account, locator),
+		bytes: 0,
+		expires: Date.now() + CACHE_TTL_MS
+	};
+	cache.set(key, entry);
+	entry.value.then(
+		(read) => {
+			if (cache.get(key) !== entry) return;
+			entry.read = read;
+			entry.bytes = readSize(read);
+			cachedBytes += entry.bytes;
+			for (const [oldest] of cache) {
+				if (cachedBytes <= CACHE_MAX_BYTES) break;
+				forget(oldest);
+			}
+		},
+		() => {
+			if (cache.get(key) === entry) forget(key);
+		}
+	);
+	return entry.value;
+}
+
+/** Downloads attachments by part ID, in the given order. */
+export async function getAttachments(
+	account: MailAccount,
+	locator: MessageLocator,
+	partIds: string[]
+): Promise<{ filename: string; contentType: string; content: Buffer }[]> {
+	if (!partIds.length) return [];
+	return withMailbox(account, locator.path, async (client, mailbox) => {
+		assertSameMailbox(mailbox, locator);
+		const uid = String(locator.uid);
+		const message = await client.fetchOne(uid, { bodyStructure: true }, { uid: true });
+		if (!message) throw new MailError('This message no longer exists.', 404);
+		const { attachments } = planMessage(message.bodyStructure);
+		const files = [];
+		for (const partId of partIds) {
+			const part = attachments.find((a) => a.partId === partId);
+			if (!part) throw new MailError('Attachment not found.', 404);
+			const { content } = await client.download(uid, partId, {
+				uid: true,
+				chunkSize: DOWNLOAD_CHUNK_BYTES
+			});
+			files.push({
+				filename: attachmentName(part),
+				contentType: part.contentType || 'application/octet-stream',
+				content: content ? Buffer.concat(await content.toArray()) : Buffer.alloc(0)
+			});
+		}
+		return files;
+	});
+}
+
 export async function getAttachment(
 	account: MailAccount,
 	locator: MessageLocator,
 	partId: string
 ): Promise<{ filename: string; contentType: string; content: Buffer }> {
-	const { message } = await fetchSource(account, locator);
-	const parsed = await simpleParser(message.source!);
-	const attachment = parsed.attachments[Number(partId)];
-	if (!/^\d+$/.test(partId) || !attachment) throw new MailError('Attachment not found.', 404);
-	return {
-		filename: attachment.filename ?? `attachment-${Number(partId) + 1}`,
-		contentType: attachment.contentType || 'application/octet-stream',
-		content: attachment.content
-	};
+	const [file] = await getAttachments(account, locator, [partId]);
+	return file;
 }
 
 interface RefGroup {
@@ -345,6 +473,22 @@ export async function setFlags(
 				else await client.messageFlagsRemove(group.uids, [flag], { uid: true });
 			}
 		});
+		for (const uid of group.uids) {
+			const key = cacheKey(group.account.id, group.path, group.uidValidity, uid);
+			const read = cache.get(key)?.read;
+			if (!read) {
+				forget(key);
+				continue;
+			}
+			if (flags.seen !== undefined) read.detail.unread = !flags.seen;
+			if (flags.flagged !== undefined) read.detail.starred = flags.flagged;
+		}
+	}
+}
+
+function forgetGroup(group: RefGroup): void {
+	for (const uid of group.uids) {
+		forget(cacheKey(group.account.id, group.path, group.uidValidity, uid));
 	}
 }
 
@@ -360,6 +504,7 @@ export async function moveMessages(groups: RefGroup[], target: MoveTarget): Prom
 					? await requireFolder(group.account, target)
 					: await requireFolder(group.account, target.path);
 		if (destination === group.path) continue;
+		forgetGroup(group);
 		await inGroup(group, (client) => client.messageMove(group.uids, destination, { uid: true }));
 	}
 }
@@ -367,6 +512,7 @@ export async function moveMessages(groups: RefGroup[], target: MoveTarget): Prom
 /** Permanently deletes messages (flag \Deleted and expunge). Only offered for Trash and Spam. */
 export async function deleteMessages(groups: RefGroup[]): Promise<void> {
 	for (const group of groups) {
+		forgetGroup(group);
 		await inGroup(group, (client) => client.messageDelete(group.uids, { uid: true }));
 	}
 }
