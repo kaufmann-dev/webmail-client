@@ -78,7 +78,8 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
   (`crypto.ts`, `credentials.ts`); never return `MailAccount.secret` to the browser (use
   `toSummary`).
 - Throw `MailError` for messages that are safe to show users and AI clients.
-- Message HTML is sanitized in `render.ts` and rendered only in the sandboxed iframe in
+- Message HTML is sanitized in `render.ts` (style sheets from `<head>` are kept, since Outlook sets
+  its paragraph spacing there) and rendered only in the sandboxed iframe in
   `message-body.svelte` (no `allow-scripts`, no referrer; the CSP blocks remote loads in Spam until
   allowed). Attachments are served with `Content-Disposition: attachment`.
 - Editor HTML and signatures (sanitized HTML in `mail_account.signature`) come from the browser and

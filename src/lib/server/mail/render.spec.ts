@@ -10,6 +10,14 @@ describe('sanitizeEmailHtml', () => {
 		expect(html).toContain('<p>Hi</p>');
 	});
 
+	it('keeps the style sheets of the head, where Outlook sets its paragraph spacing', () => {
+		const { html } = sanitizeEmailHtml(
+			'<html><head><meta charset="utf-8"><title>x</title><style>p.MsoNormal{margin:0cm}</style></head>' +
+				'<body><p class="MsoNormal">Hallo</p></body></html>'
+		);
+		expect(html).toBe('<style>p.MsoNormal{margin:0cm}</style><p class="MsoNormal">Hallo</p>');
+	});
+
 	it('keeps layout markup and opens links in a new tab', () => {
 		const { html } = sanitizeEmailHtml(
 			'<table width="600"><tr><td style="color:red">x</td></tr></table><a href="https://example.com">l</a>'

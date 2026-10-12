@@ -63,12 +63,23 @@ const OPTIONS: sanitizeHtml.IOptions = {
 };
 
 /**
+ * The style sheets of the document head moved into the body; sanitize-html drops the head with
+ * everything in it. Outlook keeps its paragraph spacing there (`p.MsoNormal { margin: 0 }`), so
+ * without them its mails, and replies quoting them, show a gap after every line.
+ */
+function hoistHeadStyles(html: string): string {
+	return html.replace(/<head\b[^>]*>([\s\S]*?)<\/head\s*>/i, (_, head: string) =>
+		(head.match(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi) ?? []).join('')
+	);
+}
+
+/**
  * Email HTML made safe for display: no scripts, forms, frames, or event handlers. Embedded `cid:`
  * images arrive as data URIs from the parser. Remote resources stay in the markup; the iframe's
  * CSP decides whether they load.
  */
 export function sanitizeEmailHtml(html: string): { html: string; hasRemoteImages: boolean } {
-	const clean = sanitizeHtml(html, OPTIONS);
+	const clean = sanitizeHtml(hoistHeadStyles(html), OPTIONS);
 	return { html: clean, hasRemoteImages: REMOTE_RESOURCE.test(clean) };
 }
 
