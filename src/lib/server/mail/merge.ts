@@ -65,3 +65,12 @@ export function mergePages(
 	const more = pages.some((page) => cursor[page.accountId] !== 0);
 	return { messages, cursor: more ? cursor : null };
 }
+
+/**
+ * Drops messages received before `notBefore`. Pages run from the newest message down, so once one
+ * is dropped nothing newer follows and the account is done.
+ */
+export function trimPage(page: AccountPage, notBefore: Date): AccountPage {
+	const items = page.items.filter((m) => Date.parse(m.date) >= notBefore.getTime());
+	return items.length === page.items.length ? page : { ...page, items, exhausted: true };
+}

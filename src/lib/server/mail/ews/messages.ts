@@ -227,6 +227,19 @@ export async function getAttachments(
 	}));
 }
 
+/** When items were received, in the given order; null for items that are gone. */
+export async function receivedDates(
+	account: MailAccount,
+	ids: string[]
+): Promise<(string | null)[]> {
+	if (!ids.length) return [];
+	const messages = await ewsCall(account, request.getItems(ids, ['item:DateTimeReceived']));
+	return messages.map((message) => {
+		const item = failed(message) ? null : firstItem(message);
+		return dateOrNull(text(item?.node.DateTimeReceived))?.toISOString() ?? null;
+	});
+}
+
 /** The element names of items, needed to update them; null for items that are gone. */
 async function itemTypes(account: MailAccount, ids: string[]): Promise<(string | null)[]> {
 	const messages = await ewsCall(account, request.getItems(ids, []));

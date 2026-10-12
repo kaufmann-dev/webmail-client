@@ -24,7 +24,6 @@ import { getFolders, resolveFolder } from '../mail/folders';
 import { InvalidMessageRefError } from '../mail/message-ref';
 import {
 	getAttachment,
-	getMessage,
 	getThread,
 	groupRefs,
 	listMessages,
@@ -36,8 +35,10 @@ import { composeBody, formatAddress, looksLikeReplySubject } from '../mail/threa
 import type { MailAccount } from '../mail/types';
 import { McpAccess, McpAccessError } from './access';
 
-const INSTRUCTIONS = `Email server for the user's mail accounts (Gmail, Purelymail, Microsoft 365).
-Only the accounts this connection was granted are visible; call list_accounts first.
+const INSTRUCTIONS = `Email server for the user's mail accounts (Gmail, Purelymail, Microsoft 365,
+Exchange). Only the accounts this connection was granted are visible; call list_accounts first.
+Accounts may limit this connection to recent messages or withhold attachments; list_accounts
+shows the limits.
 
 Messages are addressed by an opaque message_ref returned from list_messages, search_messages,
 get_message and get_thread. Pass it back unchanged.
@@ -189,13 +190,15 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 		},
 		() =>
 			guard(async () =>
-				access.list().map(({ account, level }) => ({
+				access.list().map(({ account, level, maxAgeDays, allowAttachments }) => ({
 					account_id: account.id,
 					email: account.email,
 					label: account.label,
 					provider: account.provider,
 					access: level,
-					access_description: ACCESS_LEVEL_LABELS[level]
+					access_description: ACCESS_LEVEL_LABELS[level],
+					max_age_days: maxAgeDays,
+					attachments_allowed: allowAttachments
 				}))
 			)
 	);
@@ -236,7 +239,9 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 			throw new McpAccessError(
 				'This connection has no mail accounts. The user can grant some at Settings → Connected apps in the webmail.'
 			);
-		const page = await listMessages(accounts, folder, filters, cursor ?? null, limit);
+		const page = await listMessages(accounts, folder, filters, cursor ?? null, limit, {
+			notBefore: access.notBefore(accounts)
+		});
 		return {
 			messages: page.messages.map((m) => summaryOut(m, accountsById)),
 			next_cursor: page.nextCursor,
@@ -314,16 +319,27 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 		{
 			title: 'Read message',
 			description:
-				"Returns a message's headers, plain-text body, attachment list, and calendar invitation if it carries one. " +
-				'Does not mark it as read.',
+				"Returns a message's headers, plain-text body, attachment list (unless the account withholds attachments), " +
+				'and calendar invitation if it carries one. Does not mark it as read.',
 			inputSchema: z.object({ message_ref: messageRef }),
 			annotations: { readOnlyHint: true }
 		},
 		({ message_ref }) =>
 			guard(async () => {
-				const { account, locator } = access.requireRef(message_ref, 'read');
-				const { detail } = await getMessage(account, locator);
+				const { grant, locator, read } = await access.requireMessage(message_ref, 'read');
+				const { detail } = read;
 				const truncated = detail.text.length > MAX_BODY_CHARS;
+				// File names can be sensitive too, so a grant without attachments hides the list.
+				const attachments = grant.allowAttachments
+					? {
+							attachments: detail.attachments.map((a) => ({
+								part_id: a.partId,
+								filename: a.filename,
+								content_type: a.contentType,
+								size: a.size
+							}))
+						}
+					: { attachments_allowed: false };
 				return {
 					...summaryOut(detail, accountsById),
 					folder: locator.path,
@@ -331,12 +347,7 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 					reply_to: detail.replyTo.map(formatAddress),
 					message_id: detail.messageId,
 					in_reply_to: detail.inReplyTo,
-					attachments: detail.attachments.map((a) => ({
-						part_id: a.partId,
-						filename: a.filename,
-						content_type: a.contentType,
-						size: a.size
-					})),
+					...attachments,
 					invitation: detail.invitation && invitationOut(detail.invitation),
 					body: truncated ? detail.text.slice(0, MAX_BODY_CHARS) : detail.text,
 					body_truncated: truncated
@@ -349,16 +360,16 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 		{
 			title: 'Get conversation',
 			description:
-				'Lists the other messages of the conversation a message belongs to (received and sent), oldest first.',
+				'Lists the other messages of the conversation a message belongs to (received and sent), oldest first. ' +
+				"Messages outside the account's time window are left out.",
 			inputSchema: z.object({ message_ref: messageRef }),
 			annotations: { readOnlyHint: true }
 		},
 		({ message_ref }) =>
 			guard(async () => {
-				const { account, locator } = access.requireRef(message_ref, 'read');
-				const { detail } = await getMessage(account, locator);
-				const thread = await getThread(account, locator, detail);
-				return thread.map((m) => summaryOut(m, accountsById));
+				const { account, locator, read } = await access.requireMessage(message_ref, 'read');
+				const thread = await getThread(account, locator, read.detail);
+				return access.visible(thread).map((m) => summaryOut(m, accountsById));
 			})
 	);
 
@@ -373,7 +384,9 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 		},
 		({ message_ref, part_id }) =>
 			guard(async (): Promise<CallToolResult> => {
-				const { account, locator } = access.requireRef(message_ref, 'read');
+				const { account, locator } = await access.requireMessage(message_ref, 'read', {
+					attachments: true
+				});
 				const file = await getAttachment(account, locator, part_id);
 				if (file.content.length > MAX_ATTACHMENT_BYTES) {
 					return failure(`${file.filename} is larger than 10 MB and cannot be returned.`);
@@ -427,7 +440,7 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 		},
 		({ message_refs, action, folder }) =>
 			guard(async () => {
-				for (const ref of message_refs) access.requireRef(ref, 'organize');
+				await access.requireMessages(message_refs, 'organize');
 				const groups = await groupRefs(userId, message_refs);
 				switch (action) {
 					case 'mark_read':
@@ -471,7 +484,7 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 		},
 		({ message_ref, body, reply_all, extra_cc, attachments, mode: how }) =>
 			guard(async () => {
-				access.requireRef(message_ref, how === 'send' ? 'send' : 'organize');
+				await access.requireMessage(message_ref, how === 'send' ? 'send' : 'organize');
 				const prepared = await prepareReply(userId, message_ref, reply_all);
 				const draft: Draft = {
 					...prepared.draft,
@@ -488,7 +501,8 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 		{
 			title: 'Forward message',
 			description:
-				'Forwards a message with its original headers, text, and (by default) attachments under a "Fwd:" subject.',
+				'Forwards a message with its original headers, text, and (by default) attachments under a "Fwd:" subject. ' +
+				'Accounts that withhold attachments need include_attachments set to false.',
 			inputSchema: z.object({
 				message_ref: messageRef,
 				to: recipientList.min(1),
@@ -500,7 +514,10 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 		},
 		({ message_ref, to, cc, body, include_attachments, mode: how }) =>
 			guard(async () => {
-				access.requireRef(message_ref, how === 'send' ? 'send' : 'organize');
+				await access.requireMessage(message_ref, how === 'send' ? 'send' : 'organize', {
+					attachments: include_attachments,
+					attachmentsHint: 'Forward with include_attachments set to false instead.'
+				});
 				const prepared = await prepareForward(userId, message_ref, include_attachments);
 				const draft: Draft = {
 					...prepared.draft,
@@ -570,7 +587,7 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 		},
 		({ message_ref, response }) =>
 			guard(async () => {
-				access.requireRef(message_ref, 'send');
+				await access.requireMessage(message_ref, 'send');
 				const result = await respondToInvitation(userId, message_ref, response);
 				return {
 					status: 'sent',
@@ -593,7 +610,7 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 		},
 		({ draft_ref }) =>
 			guard(async () => {
-				const { account, locator } = access.requireRef(draft_ref, 'send');
+				const { account, locator } = await access.requireMessage(draft_ref, 'send');
 				if (locator.path !== (await resolveFolder(account, 'drafts'))) {
 					throw new MailError('That message is not in the Drafts folder.', 400);
 				}

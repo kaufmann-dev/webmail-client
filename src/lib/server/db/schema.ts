@@ -1,4 +1,5 @@
 import {
+	boolean,
 	index,
 	integer,
 	pgEnum,
@@ -49,7 +50,10 @@ export const mailAccount = pgTable(
 	(table) => [unique('mail_account_user_email_uq').on(table.userId, table.email)]
 );
 
-/** Which mail accounts an MCP client may use, and at which level. Chosen on the consent screen. */
+/**
+ * Which mail accounts an MCP client may use, at which level, and within which limits. Chosen on the
+ * consent screen.
+ */
 export const mcpAccountAccess = pgTable(
 	'mcp_account_access',
 	{
@@ -63,6 +67,9 @@ export const mcpAccountAccess = pgTable(
 			.notNull()
 			.references(() => mailAccount.id, { onDelete: 'cascade' }),
 		level: accessLevelEnum('level').notNull(),
+		/** Only messages received within this many days; null for any age. */
+		maxAgeDays: integer('max_age_days'),
+		allowAttachments: boolean('allow_attachments').notNull().default(true),
 		updatedAt: timestamp('updated_at')
 			.defaultNow()
 			.$onUpdate(() => new Date())

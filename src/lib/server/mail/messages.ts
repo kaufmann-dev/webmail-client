@@ -20,7 +20,7 @@ import * as ews from './ews/messages';
 import { ensureArchiveFolder, requireFolder, resolveFolder } from './folders';
 import { withMailbox } from './imap';
 import { findCalendarPart, isCalendarPart, parseInvitation } from './invitations';
-import { decodeCursor, encodeCursor, mergePages, type AccountPage } from './merge';
+import { decodeCursor, encodeCursor, mergePages, trimPage, type AccountPage } from './merge';
 import {
 	decodeMessageRef,
 	encodeMessageRef,
@@ -153,6 +153,24 @@ async function fetchAccountPage(
 	});
 }
 
+const DAY_MS = 24 * 60 * 60_000;
+
+/**
+ * Filters for an account that may only show messages received from `notBefore` on. The server
+ * search starts a day early, since IMAP SINCE compares whole days in the server's time zone; the
+ * exact cut is `trimPage`.
+ */
+function withinWindow(filters: MessageFilters, notBefore: Date): MessageFilters {
+	const earliest = new Date(notBefore.getTime() - DAY_MS);
+	const since = filters.since && filters.since > earliest ? filters.since : earliest;
+	return { ...filters, since };
+}
+
+export interface ListOptions {
+	/** Per account ID: leave out messages received before this time (MCP time windows). */
+	notBefore?: Map<string, Date>;
+}
+
 /**
  * Lists one folder (a role such as `inbox` or a path) across the given accounts, newest first,
  * merged by date. An unreachable account is reported in `errors` instead of failing the list.
@@ -162,7 +180,8 @@ export async function listMessages(
 	folder: string,
 	filters: MessageFilters,
 	cursorValue: string | null,
-	limit = DEFAULT_PAGE_SIZE
+	limit = DEFAULT_PAGE_SIZE,
+	options: ListOptions = {}
 ): Promise<MessagePage> {
 	const cursor = decodeCursor(cursorValue);
 	const errors: AccountError[] = [];
@@ -173,16 +192,19 @@ export async function listMessages(
 				try {
 					const path = await resolveFolder(account, folder);
 					if (!path) return { accountId: account.id, items: [], exhausted: true };
-					if (account.provider === 'exchange') {
-						return await ews.listPage(account, path, filters, cursor[account.id], limit);
-					}
-					return await fetchAccountPage(
-						account,
-						path,
-						buildSearch(account, filters),
-						cursor[account.id],
-						limit
-					);
+					const notBefore = options.notBefore?.get(account.id);
+					const accountFilters = notBefore ? withinWindow(filters, notBefore) : filters;
+					const page =
+						account.provider === 'exchange'
+							? await ews.listPage(account, path, accountFilters, cursor[account.id], limit)
+							: await fetchAccountPage(
+									account,
+									path,
+									buildSearch(account, accountFilters),
+									cursor[account.id],
+									limit
+								);
+					return notBefore ? trimPage(page, notBefore) : page;
 				} catch (error) {
 					errors.push({ accountId: account.id, message: errorMessage(error) });
 					return null;
@@ -437,6 +459,50 @@ export async function getAttachment(
 ): Promise<{ filename: string; contentType: string; content: Buffer }> {
 	const [file] = await getAttachments(account, locator, [partId]);
 	return file;
+}
+
+/**
+ * When messages were received (`MessageSummary.date`), by ref, without reading them. Messages that
+ * no longer exist, or whose folder changed its UIDVALIDITY, are missing.
+ */
+export async function receivedDates(
+	account: MailAccount,
+	locators: MessageLocator[]
+): Promise<Map<string, string>> {
+	const dates = new Map<string, string>();
+	if (account.provider === 'exchange') {
+		const items = locators.map(ewsLocator);
+		const found = await ews.receivedDates(
+			account,
+			items.map((l) => l.itemId)
+		);
+		items.forEach((locator, index) => {
+			const date = found[index];
+			if (date) dates.set(encodeMessageRef(locator), date);
+		});
+		return dates;
+	}
+	const mailboxes = new Map<string, ImapLocator[]>();
+	for (const locator of locators.map(imapLocator)) {
+		const key = JSON.stringify([locator.path, locator.uidValidity]);
+		mailboxes.set(key, [...(mailboxes.get(key) ?? []), locator]);
+	}
+	for (const group of mailboxes.values()) {
+		const { path, uidValidity } = group[0];
+		await withMailbox(account, path, async (client, mailbox) => {
+			if (String(mailbox.uidValidity) !== uidValidity) return;
+			const uids = group.map((l) => l.uid);
+			for (const message of await client.fetchAll(
+				uids,
+				{ uid: true, internalDate: true },
+				{ uid: true }
+			)) {
+				const locator = group.find((l) => l.uid === message.uid);
+				if (locator) dates.set(encodeMessageRef(locator), isoDate(message.internalDate));
+			}
+		});
+	}
+	return dates;
 }
 
 type RefGroup =

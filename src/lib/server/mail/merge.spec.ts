@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MessageSummary } from '../../mail-types';
-import { decodeCursor, encodeCursor, mergePages } from './merge';
+import { decodeCursor, encodeCursor, mergePages, trimPage } from './merge';
 
 function msg(accountId: string, uid: number, date: string): MessageSummary {
 	return {
@@ -62,5 +62,23 @@ describe('mergePages', () => {
 		expect(decodeCursor(encodeCursor({ a: 5, b: 0 }))).toEqual({ a: 5, b: 0 });
 		expect(decodeCursor('%%%')).toEqual({});
 		expect(decodeCursor(Buffer.from('{"a":-1,"b":"x"}').toString('base64url'))).toEqual({});
+	});
+});
+
+describe('trimPage', () => {
+	const page = {
+		accountId: 'a',
+		items: [msg('a', 9, '2026-10-10T12:00:00Z'), msg('a', 8, '2026-10-09T08:00:00Z')],
+		exhausted: false
+	};
+
+	it('drops messages received before the window and ends the account', () => {
+		const trimmed = trimPage(page, new Date('2026-10-09T09:00:00Z'));
+		expect(trimmed.items.map((m) => m.ref)).toEqual(['a:9']);
+		expect(trimmed.exhausted).toBe(true);
+	});
+
+	it('leaves a page inside the window unchanged', () => {
+		expect(trimPage(page, new Date('2026-10-01T00:00:00Z'))).toBe(page);
 	});
 });

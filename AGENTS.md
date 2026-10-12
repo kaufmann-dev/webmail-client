@@ -73,11 +73,21 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
 - `src/lib/server/csrf.ts` replaces SvelteKit's CSRF check, minus `/api/auth/*`.
   `hooks.server.ts` routes `/.well-known/*` to Better Auth.
 - The MCP endpoint (`src/routes/mcp/+server.ts`) requires the single OAuth scope `mail`. Per-account
-  access lives in `mcp_account_access` (levels `read` < `organize` < `send`), set on
-  `/consent` and in Settings → Connected apps.
-- Every MCP tool in `src/lib/server/mcp/tools.ts` must call `access.require` or
-  `access.requireRef` with its level before touching mail. Sending tools default to `mode: 'draft'`,
-  except `respond_to_invitation`, which always sends (a saved draft would lose its calendar part).
+  access lives in `mcp_account_access`, set on `/consent` and in Settings → Connected apps (both
+  through `access-grant-fields.svelte` and `grantsFromForm`): a level (`read` < `organize` <
+  `send`), an optional time window (`max_age_days`: 7, 30, or 90; null for any age, compared with
+  the received date `MessageSummary.date`), and `allow_attachments`.
+- Every MCP tool in `src/lib/server/mcp/tools.ts` checks access in `access.ts` before touching mail,
+  so the limits hold for IMAP and Exchange alike:
+  - Account-level tools call `access.require` with their level.
+  - Tools that use an existing message go through `access.requireMessage` (level, attachment rule
+    with `attachments: true`, then the time window on the cached `getMessage`); bulk actions go
+    through `access.requireMessages`, which checks dates with `receivedDates` without reading.
+  - Lists pass `access.notBefore(accounts)` to `listMessages`, and threads pass through
+    `access.visible`.
+  - Without attachments, `get_message` leaves out the attachment list (file names included).
+- Sending tools default to `mode: 'draft'`, except `respond_to_invitation`, which always sends (a
+  saved draft would lose its calendar part).
 
 ## UI
 

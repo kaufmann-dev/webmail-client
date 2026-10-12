@@ -38,6 +38,22 @@ export const ACCESS_LEVEL_DESCRIPTIONS: Record<AccessLevel, string> = {
 	send: 'Also send replies, forwards, new messages, and invitation responses.'
 };
 
+/** Optional MCP time windows: an app may only see messages received within this many days. */
+export const MAX_AGE_DAYS = [7, 30, 90] as const;
+export type MaxAgeDays = (typeof MAX_AGE_DAYS)[number];
+
+export function isMaxAgeDays(value: number): value is MaxAgeDays {
+	return (MAX_AGE_DAYS as readonly number[]).includes(value);
+}
+
+/** One MCP client's access to one mail account. */
+export interface AccountGrant {
+	level: AccessLevel;
+	/** Null means messages of any age. */
+	maxAgeDays: MaxAgeDays | null;
+	allowAttachments: boolean;
+}
+
 export const FOLDER_ROLES = ['inbox', 'drafts', 'sent', 'archive', 'spam', 'trash'] as const;
 export type FolderRole = (typeof FOLDER_ROLES)[number];
 

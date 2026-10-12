@@ -112,6 +112,11 @@ shows these steps with copyable commands for the deployed URL.
 - **Consent:** after you sign in with Pocket ID, the consent screen lists your mail accounts. For
   each one, choose No access, **Read only**, **Read & organize** (flags, moving, archiving, trash,
   drafts), or **Full** (also sending).
+- **Limits:** per account, an app can also be held to messages received in the last 7, 30, or 90
+  days, and attachments can be withheld. Older messages then do not appear in lists, searches, or
+  conversations, and every tool refuses them. Without attachments, `get_message` leaves out the
+  attachment list, `get_attachment` is refused, and `forward_message` only forwards without
+  attachments. The server enforces both on every tool call.
 - **Changing access:** Settings → Connected apps edits these choices at any time. Changes take effect
   on the app's next request. Revoking an app deletes its consent, grants, and refresh tokens.
 - **Tokens:** access tokens are 15-minute JWTs bound to `/mcp`, with rotating refresh tokens. The
@@ -124,20 +129,21 @@ shows these steps with copyable commands for the deployed URL.
 
 | Tool                    | Level            | Purpose                                                                           |
 | ----------------------- | ---------------- | --------------------------------------------------------------------------------- |
-| `list_accounts`         | Read             | Granted accounts and their access levels                                          |
+| `list_accounts`         | Read             | Granted accounts with their access levels and limits                              |
 | `list_folders`          | Read             | An account's folders, with roles (inbox, drafts, sent, archive, spam, trash)      |
 | `list_messages`         | Read             | A folder across one or all granted accounts, newest first, with paging            |
 | `search_messages`       | Read             | Search by text, sender, recipient, subject, date, unread, or starred              |
-| `get_message`           | Read             | Headers, body, attachments, and any invitation; does not mark the message read    |
+| `get_message`           | Read             | Headers, body, attachments (if allowed), invitation; does not mark it read        |
 | `get_thread`            | Read             | Other messages of the same conversation, sent ones included                       |
-| `get_attachment`        | Read             | An attachment as text, image, or base64 (up to 10 MB)                             |
+| `get_attachment`        | Read             | An attachment as text, image, or base64 (up to 10 MB), if attachments are allowed |
 | `update_messages`       | Read & organize  | Mark read/unread, star, archive, trash, spam, or move                             |
 | `reply_to_message`      | Organize or Full | Threaded reply or reply-all with the quote; `mode` is `draft` (default) or `send` |
-| `forward_message`       | Organize or Full | Forward with the original headers and attachments                                 |
+| `forward_message`       | Organize or Full | Forward with the original headers, and attachments if allowed                     |
 | `compose_new_message`   | Organize or Full | New conversations only; rejects `Re:` subjects                                    |
 | `send_draft`            | Full             | Send a draft from the Drafts folder                                               |
 | `respond_to_invitation` | Full             | Accept, tentatively accept, or decline an invitation; sends immediately           |
 
+Every tool that lists or uses messages only reaches those within the account's time window.
 Messages are addressed by an opaque `message_ref`. The reply and forward tools derive the subject,
 recipients, and threading headers from the original message, so "reply to this email" always
 stays in the conversation. Sending tools save a draft unless the request explicitly says to send;

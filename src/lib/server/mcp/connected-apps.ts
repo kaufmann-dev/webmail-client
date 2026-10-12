@@ -8,15 +8,18 @@ import {
 	oauthConsent,
 	oauthRefreshToken
 } from '../db/schema';
-import type { AccessLevel } from '../../mail-types';
+import { isMaxAgeDays, type AccountGrant } from '../../mail-types';
 
 export interface ConnectedApp {
 	clientId: string;
 	name: string;
 	uri: string | null;
 	grantedAt: Date;
-	access: Record<string, AccessLevel>;
+	/** By account ID; accounts without access are missing. */
+	access: Record<string, AccountGrant>;
 }
+
+export type ClientGrant = { accountId: string } & AccountGrant;
 
 /** MCP clients the user has authorized, with the mail accounts each may use. */
 export async function listConnectedApps(userId: string): Promise<ConnectedApp[]> {
@@ -37,18 +40,25 @@ export async function listConnectedApps(userId: string): Promise<ConnectedApp[]>
 	return apps.map((app) => ({
 		...app,
 		name: app.name ?? app.clientId,
-		access: Object.fromEntries(
-			grants.filter((g) => g.clientId === app.clientId).map((g) => [g.accountId, g.level])
-		)
+		access: byAccount(grants.filter((g) => g.clientId === app.clientId))
 	}));
 }
 
-function accessFor(userId: string, clientId?: string) {
-	return db
+function byAccount(grants: ClientGrant[]): Record<string, AccountGrant> {
+	return Object.fromEntries(grants.map(({ accountId, ...grant }) => [accountId, grant]));
+}
+
+async function accessFor(
+	userId: string,
+	clientId?: string
+): Promise<(ClientGrant & { clientId: string })[]> {
+	const rows = await db
 		.select({
 			clientId: mcpAccountAccess.clientId,
 			accountId: mcpAccountAccess.accountId,
-			level: mcpAccountAccess.level
+			level: mcpAccountAccess.level,
+			maxAgeDays: mcpAccountAccess.maxAgeDays,
+			allowAttachments: mcpAccountAccess.allowAttachments
 		})
 		.from(mcpAccountAccess)
 		.where(
@@ -56,18 +66,24 @@ function accessFor(userId: string, clientId?: string) {
 				? and(eq(mcpAccountAccess.userId, userId), eq(mcpAccountAccess.clientId, clientId))
 				: eq(mcpAccountAccess.userId, userId)
 		);
+	return rows.map((row) => ({
+		...row,
+		maxAgeDays: row.maxAgeDays !== null && isMaxAgeDays(row.maxAgeDays) ? row.maxAgeDays : null
+	}));
 }
 
-export async function getClientAccess(userId: string, clientId: string) {
-	const rows = await accessFor(userId, clientId);
-	return Object.fromEntries(rows.map((r) => [r.accountId, r.level])) as Record<string, AccessLevel>;
+export async function getClientAccess(
+	userId: string,
+	clientId: string
+): Promise<Record<string, AccountGrant>> {
+	return byAccount(await accessFor(userId, clientId));
 }
 
 /** Replaces which accounts a client may use. Only the user's own accounts are accepted. */
 export async function setClientAccess(
 	userId: string,
 	clientId: string,
-	grants: { accountId: string; level: AccessLevel }[]
+	grants: ClientGrant[]
 ): Promise<void> {
 	const owned = new Set(
 		(
@@ -79,7 +95,14 @@ export async function setClientAccess(
 	);
 	const rows = grants
 		.filter((g) => owned.has(g.accountId))
-		.map((g) => ({ userId, clientId, accountId: g.accountId, level: g.level }));
+		.map((g) => ({
+			userId,
+			clientId,
+			accountId: g.accountId,
+			level: g.level,
+			maxAgeDays: g.maxAgeDays,
+			allowAttachments: g.allowAttachments
+		}));
 	await db.transaction(async (tx) => {
 		await tx
 			.delete(mcpAccountAccess)
@@ -109,14 +132,24 @@ export async function revokeConnectedApp(userId: string, clientId: string): Prom
 	});
 }
 
-/** Parses `access:<accountId>` form fields (value: read | organize | send | none). */
-export function grantsFromForm(form: FormData): { accountId: string; level: AccessLevel }[] {
-	const grants: { accountId: string; level: AccessLevel }[] = [];
+/**
+ * Parses the grant fields per account: `access:<accountId>` (read | organize | send | none),
+ * `maxAge:<accountId>` (a number of days from `MAX_AGE_DAYS`, empty for any age), and the
+ * `attachments:<accountId>` checkbox, which is missing from the form when unchecked.
+ */
+export function grantsFromForm(form: FormData): ClientGrant[] {
+	const grants: ClientGrant[] = [];
 	for (const [key, value] of form.entries()) {
 		if (!key.startsWith('access:')) continue;
-		if (value === 'read' || value === 'organize' || value === 'send') {
-			grants.push({ accountId: key.slice('access:'.length), level: value });
-		}
+		if (value !== 'read' && value !== 'organize' && value !== 'send') continue;
+		const accountId = key.slice('access:'.length);
+		const days = Number(form.get(`maxAge:${accountId}`) || NaN);
+		grants.push({
+			accountId,
+			level: value,
+			maxAgeDays: isMaxAgeDays(days) ? days : null,
+			allowAttachments: form.has(`attachments:${accountId}`)
+		});
 	}
 	return grants;
 }
