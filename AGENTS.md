@@ -48,8 +48,11 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
     calendar parts, and embedded images (`structure.ts`); attachments download on demand. Read
     messages stay in an in-memory cache that `setFlags`, `moveMessages`, and `deleteMessages` keep
     current.
-  - `compose.ts`: drafts and sending.
-  - `threading.ts`: pure reply and forward header logic.
+  - `compose.ts`: drafts and sending. Outgoing mail is HTML (`html-body.ts`: the document around
+    the editor HTML and its `html-to-text` plain-text alternative); `data:` images go out as
+    embedded parts.
+  - `threading.ts`: pure reply and forward header logic, the HTML quote and forward block, and
+    `composeBody` (text, `wm-signature` block, `wm-quote` block).
   - `invitations.ts`: pure calendar invitation parsing and iMIP replies (ical.js);
     `respondToInvitation` in `compose.ts` sends them.
 - Reply and forward headers (`In-Reply-To`, `References`, subject prefixes, recipients) are built
@@ -66,6 +69,10 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
 - Message HTML is sanitized in `render.ts` and rendered only in the sandboxed iframe in
   `message-body.svelte` (no `allow-scripts`, no referrer; the CSP blocks remote loads in Spam until
   allowed). Attachments are served with `Content-Disposition: attachment`.
+- Editor HTML and signatures (sanitized HTML in `mail_account.signature`) come from the browser and
+  are always sanitized again on the server with `sanitizeEmailHtml` before they are saved or sent.
+  The editor (`html-editor.svelte`) is a `contentEditable` document in an iframe without
+  `allow-scripts`, driven from the parent; its CSP blocks remote images while editing.
 
 ## Auth and MCP
 

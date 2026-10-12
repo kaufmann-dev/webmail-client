@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import MailComposer from 'nodemailer/lib/mail-composer';
+import { EMPTY_LINE } from '../../html';
 import type { Address, AttachmentInfo, InvitationResponse } from '../../mail-types';
 import { getAccount, listAccounts } from './accounts';
 import { mailAuth } from './credentials';
 import { errorMessage, MailError } from './errors';
 import { requireFolder, resolveFolder } from './folders';
 import * as ews from './ews/compose';
+import { outgoingHtml, plainTextOf, textToComposeHtml } from './html-body';
 import { withClient, withMailbox } from './imap';
 import { invitationReply } from './invitations';
 import { encodeMessageRef } from './message-ref';
@@ -47,7 +49,8 @@ export interface Draft {
 	cc: Address[];
 	bcc: Address[];
 	subject: string;
-	text: string;
+	/** Sanitized editor HTML, without the document around it. */
+	html: string;
 	inReplyTo: string | null;
 	references: string[];
 	attachments: OutgoingAttachment[];
@@ -57,7 +60,7 @@ export interface Draft {
 
 export interface PreparedDraft {
 	draft: Draft;
-	/** The text placed below the user's own text: signature plus quote or forwarded message. */
+	/** The HTML placed below the user's own text: signature plus quote or forwarded message. */
 	suffix: string;
 	/** Attachments of the original message (forwards), addressable by part ID. */
 	sourceAttachments: AttachmentInfo[];
@@ -75,7 +78,7 @@ async function loadOriginal(userId: string, ref: string) {
 		to: detail.to,
 		cc: detail.cc,
 		date: sentAt,
-		text: detail.text
+		html: detail.html
 	};
 	return { account, locator, original, attachments: detail.attachments };
 }
@@ -99,7 +102,7 @@ export async function prepareReply(
 			cc,
 			bcc: [],
 			subject: replySubject(original.subject),
-			text: suffix,
+			html: EMPTY_LINE + suffix,
 			inReplyTo: original.messageId,
 			references: replyReferences(original),
 			attachments: []
@@ -123,7 +126,7 @@ export async function prepareForward(
 			cc: [],
 			bcc: [],
 			subject: forwardSubject(original.subject),
-			text: suffix,
+			html: EMPTY_LINE + suffix,
 			inReplyTo: null,
 			references: replyReferences(original),
 			attachments: includeAttachments
@@ -147,7 +150,7 @@ export async function loadDraft(userId: string, ref: string): Promise<Draft> {
 		cc: detail.cc,
 		bcc: detail.bcc,
 		subject: detail.subject,
-		text: detail.text,
+		html: detail.html,
 		inReplyTo: detail.inReplyTo,
 		references: detail.references,
 		attachments: await getAttachments(
@@ -173,7 +176,10 @@ async function buildRaw(
 		cc: draft.cc,
 		bcc: draft.bcc,
 		subject: draft.subject,
-		text: draft.text,
+		html: outgoingHtml(draft.html),
+		text: plainTextOf(draft.html),
+		// Pasted images, signature images, and quoted inline images go out as embedded parts.
+		attachDataUrls: true,
 		inReplyTo: draft.inReplyTo ?? undefined,
 		references: draft.references.length ? draft.references : undefined,
 		attachments: draft.attachments,
@@ -286,7 +292,7 @@ export async function respondToInvitation(
 			cc: [],
 			bcc: [],
 			subject: reply.subject,
-			text: reply.text,
+			html: textToComposeHtml(reply.text),
 			inReplyTo: null,
 			references: [],
 			attachments: [],

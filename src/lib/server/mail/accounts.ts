@@ -12,6 +12,7 @@ import { errorMessage, MailAuthError, MailError } from './errors';
 import * as ews from './ews/client';
 import { forgetResolvedAddresses } from './ews/messages';
 import { invalidateFolders } from './folders';
+import { signatureOrNull } from './html-body';
 import { createImapClient, dropClient } from './imap';
 import type { ImapProvider } from './providers';
 import { createSmtpTransport } from './smtp';
@@ -201,7 +202,7 @@ export async function updateAccount(
 		label: input.label.trim() || account.email,
 		displayName: input.displayName.trim() || account.email,
 		color: input.color,
-		signature: input.signature.trim() ? input.signature.replace(/\s+$/, '') : null
+		signature: signatureOrNull(input.signature)
 	};
 	if (input.password) {
 		if (account.provider === 'microsoft') {

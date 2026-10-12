@@ -1,4 +1,5 @@
 import sanitizeHtml from 'sanitize-html';
+import { REMOTE_RESOURCE } from '../../html';
 
 const ALLOWED_TAGS = [
 	...sanitizeHtml.defaults.allowedTags,
@@ -61,9 +62,6 @@ const OPTIONS: sanitizeHtml.IOptions = {
 	}
 };
 
-const REMOTE =
-	/(?:\bsrc\s*=\s*["']?\s*https?:|url\(\s*["']?\s*https?:|\bbackground\s*=\s*["']?\s*https?:)/i;
-
 /**
  * Email HTML made safe for display: no scripts, forms, frames, or event handlers. Embedded `cid:`
  * images arrive as data URIs from the parser. Remote resources stay in the markup; the iframe's
@@ -71,7 +69,7 @@ const REMOTE =
  */
 export function sanitizeEmailHtml(html: string): { html: string; hasRemoteImages: boolean } {
 	const clean = sanitizeHtml(html, OPTIONS);
-	return { html: clean, hasRemoteImages: REMOTE.test(clean) };
+	return { html: clean, hasRemoteImages: REMOTE_RESOURCE.test(clean) };
 }
 
 const ESCAPES: Record<string, string> = {
@@ -86,11 +84,15 @@ export function escapeHtml(text: string): string {
 	return text.replace(/[&<>"']/g, (c) => ESCAPES[c]);
 }
 
-/** Plain-text mail as HTML with clickable links and preserved line breaks. */
-export function textToHtml(text: string): string {
-	const linked = escapeHtml(text).replace(
+/** Escapes plain text and turns its web addresses into links. */
+export function linkify(text: string): string {
+	return escapeHtml(text).replace(
 		/\bhttps?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]]/g,
 		(url) => `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`
 	);
-	return `<div style="white-space: pre-wrap; overflow-wrap: anywhere">${linked}</div>`;
+}
+
+/** Plain-text mail as HTML with clickable links and preserved line breaks. */
+export function textToHtml(text: string): string {
+	return `<div style="white-space: pre-wrap; overflow-wrap: anywhere">${linkify(text)}</div>`;
 }

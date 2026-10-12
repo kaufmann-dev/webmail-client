@@ -20,9 +20,11 @@ and on the consent screen you choose which mail accounts each app may use and at
 - **Invitations:** calendar invitations show their time, place, and organizer. Accept, Maybe, and
   Decline send the standard calendar reply to the organizer. The provider's own calendar does not
   learn the answer, except on Exchange, which answers its own meeting requests.
-- **Writing:** reply, reply all, forward (attachments included), drafts, attachments, and a
-  signature per account. Replies keep `In-Reply-To` and `References`, so they stay in the
-  conversation.
+- **Writing:** HTML mail in an editor with bold, italic, underline, text color, lists, links, and
+  images; reply, reply all, forward (attachments included), drafts, and attachments. Quoted and
+  forwarded messages keep their layout and stay editable. Each account has a formatted signature
+  (Settings → Mail accounts) that follows the chosen sender. Replies keep `In-Reply-To` and
+  `References`, so they stay in the conversation.
 - **Live IMAP/SMTP and Exchange:** mail is never copied into the database. The database stores only
   the app's own data: accounts with encrypted credentials, signatures, and MCP grants.
 
@@ -146,7 +148,8 @@ shows these steps with copyable commands for the deployed URL.
 Every tool that lists or uses messages only reaches those within the account's time window.
 Messages are addressed by an opaque `message_ref`. The reply and forward tools derive the subject,
 recipients, and threading headers from the original message, so "reply to this email" always
-stays in the conversation. Sending tools save a draft unless the request explicitly says to send;
+stays in the conversation. Bodies from AI clients are plain text; they are sent as HTML mail with
+the account's signature. Sending tools save a draft unless the request explicitly says to send;
 `respond_to_invitation` has no draft mode and sends its answer at once.
 
 ## Authentication Setup

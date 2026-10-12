@@ -26,7 +26,7 @@ const original: OriginalMessage = {
 	to: [me, bob],
 	cc: [carol],
 	date: new Date('2026-10-01T10:00:00Z'),
-	text: 'Line one\n> earlier quote'
+	html: '<p>Line one</p>'
 };
 
 describe('subjects', () => {
@@ -87,20 +87,30 @@ describe('replyRecipients', () => {
 });
 
 describe('bodies', () => {
-	it('quotes the original with an attribution line', () => {
-		const quoted = quoteOriginal(original);
-		expect(quoted).toMatch(/^On .+, Alice <alice@example.com> wrote:\n> Line one\n>> earlier/);
+	it('quotes the original HTML below an attribution line', () => {
+		const quoted = quoteOriginal({
+			...original,
+			from: { name: 'A <&> B', address: 'a@example.com' }
+		});
+		expect(quoted).toMatch(/^<div>On .+, A &lt;&amp;&gt; B &lt;a@example.com&gt; wrote:<\/div>/);
+		expect(quoted).toMatch(/<blockquote style="[^"]+"><p>Line one<\/p><\/blockquote>$/);
 	});
 
-	it('puts text, signature delimiter, and quote in order', () => {
-		expect(composeBody('Hi', 'David', '> q')).toBe('Hi\n\n-- \nDavid\n\n> q');
-		expect(composeBody('Hi', null)).toBe('Hi');
+	it('puts text, signature, and quote in order', () => {
+		expect(composeBody('<div>Hi</div>', '<b>Sig</b>', '<p>q</p>')).toBe(
+			'<div>Hi</div><div><br></div><div class="wm-signature"><b>Sig</b></div>' +
+				'<div><br></div><div class="wm-quote"><p>q</p></div>'
+		);
+		expect(composeBody('<div>Hi</div>', null)).toBe('<div>Hi</div>');
+		expect(composeBody('', null, '<p>q</p>')).toBe(
+			'<div><br></div><div class="wm-quote"><p>q</p></div>'
+		);
 	});
 
-	it('includes original headers in forwards', () => {
+	it('includes escaped original headers in forwards', () => {
 		const block = forwardedBlock(original);
-		expect(block).toContain('From: Alice <alice@example.com>');
+		expect(block).toContain('From: Alice &lt;alice@example.com&gt;');
 		expect(block).toContain('Cc: carol@example.com');
-		expect(block.endsWith('Line one\n> earlier quote')).toBe(true);
+		expect(block.endsWith('<br><p>Line one</p>')).toBe(true);
 	});
 });

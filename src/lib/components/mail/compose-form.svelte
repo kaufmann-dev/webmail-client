@@ -18,7 +18,7 @@
 	import { Label } from '#lib/components/ui/label/index.js';
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
 	import { Spinner } from '#lib/components/ui/spinner/index.js';
-	import { Textarea } from '#lib/components/ui/textarea/index.js';
+	import HtmlEditor from '#lib/components/mail/html-editor.svelte';
 	import { fileSize } from '#lib/format.js';
 	import type { AccountSummary, AttachmentInfo, ComposeState } from '#lib/mail-types.js';
 	import { followSend, takeUnsent } from '#lib/outbox.js';
@@ -44,6 +44,7 @@
 	let fileInput = $state<HTMLInputElement | null>(null);
 	let form = $state<HTMLFormElement | null>(null);
 	let discardButton = $state<HTMLButtonElement | null>(null);
+	let editor = $state<HtmlEditor | null>(null);
 
 	const account = $derived(accounts.find((a) => a.id === accountId));
 	const heading = { new: 'New message', reply: 'Reply', forward: 'Forward', draft: 'Draft' }[
@@ -68,8 +69,15 @@
 
 	function onkeydown(event: KeyboardEvent) {
 		if (event.key !== 'Escape' || event.defaultPrevented || confirmDiscard || pending) return;
+		// Escape in a menu or dialog closes only that.
+		if ((event.target as Element | null)?.closest?.('[role="dialog"], [role="menu"]')) return;
 		event.preventDefault();
 		close();
+	}
+
+	/** A new sender brings its own signature. */
+	function changeSender() {
+		editor?.setSignature(accounts.find((a) => a.id === accountId)?.signature ?? null);
 	}
 
 	beforeNavigate((navigation) => {
@@ -205,7 +213,13 @@
 				<Label for="from">From</Label>
 				<div class="flex items-center gap-2">
 					{#if account}<AccountSwatch color={account.color} />{/if}
-					<NativeSelect id="from" name="accountId" bind:value={accountId} class="min-w-0 flex-1">
+					<NativeSelect
+						id="from"
+						name="accountId"
+						bind:value={accountId}
+						onchange={changeSender}
+						class="min-w-0 flex-1"
+					>
 						{#each accounts as option (option.id)}
 							<NativeSelectOption value={option.id}>
 								{option.displayName} &lt;{option.email}&gt;
@@ -252,14 +266,15 @@
 			</div>
 
 			<div class="grid gap-1.5">
-				<Label for="body">Message</Label>
-				<Textarea
-					id="body"
+				<Label onclick={() => editor?.focus()}>Message</Label>
+				<HtmlEditor
+					bind:this={editor}
 					name="body"
 					value={initial.body}
-					rows={16}
-					class="min-h-64 font-mono text-sm"
+					label="Message"
 					autofocus={initial.mode !== 'new'}
+					onchange={() => (dirty = true)}
+					onescape={() => !confirmDiscard && !pending && close()}
 				/>
 			</div>
 

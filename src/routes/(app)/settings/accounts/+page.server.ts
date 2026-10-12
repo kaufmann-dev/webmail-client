@@ -10,7 +10,8 @@ const updateSchema = z.object({
 	label: z.string().max(100),
 	displayName: z.string().max(200),
 	color: z.enum(ACCOUNT_COLORS),
-	signature: z.string().max(5000),
+	// HTML; small embedded images arrive as data URIs.
+	signature: z.string().max(2_000_000),
 	password: z.string().max(500).optional()
 });
 

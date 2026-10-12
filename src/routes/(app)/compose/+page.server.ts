@@ -1,4 +1,5 @@
 import { error, fail } from '@sveltejs/kit';
+import { EMPTY_LINE } from '#lib/html.js';
 import type { AttachmentInfo, ComposeState } from '#lib/mail-types.js';
 import { listAccounts, toSummary } from '#lib/server/mail/accounts.js';
 import { parseAddressList } from '#lib/server/mail/addresses.js';
@@ -19,7 +20,8 @@ import {
 	groupRefs,
 	resolveRef
 } from '#lib/server/mail/messages.js';
-import { formatAddress } from '#lib/server/mail/threading.js';
+import { sanitizeEmailHtml } from '#lib/server/mail/render.js';
+import { composeBody, formatAddress } from '#lib/server/mail/threading.js';
 import type { Actions, PageServerLoad } from './$types';
 
 const list = (addresses: { name: string; address: string }[]) =>
@@ -59,7 +61,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 				cc: list(d.cc),
 				bcc: '',
 				subject: d.subject,
-				body: `\n\n${prepared.suffix}`,
+				body: d.html,
 				inReplyTo: d.inReplyTo ?? '',
 				references: d.references.join(' '),
 				answersRef: reply
@@ -74,7 +76,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 				cc: '',
 				bcc: '',
 				subject: prepared.draft.subject,
-				body: `\n\n${prepared.suffix}`,
+				body: prepared.draft.html,
 				references: prepared.draft.references.join(' '),
 				carriedRef: forward,
 				carried: prepared.sourceAttachments
@@ -90,7 +92,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 				cc: list(detail.cc),
 				bcc: list(detail.bcc),
 				subject: detail.subject,
-				body: detail.text,
+				body: detail.html,
 				inReplyTo: detail.inReplyTo ?? '',
 				references: detail.references.join(' '),
 				replacesDraftRef: draft,
@@ -107,7 +109,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 				cc: '',
 				bcc: '',
 				subject: params.get('subject') ?? '',
-				body: account?.signature ? `\n\n-- \n${account.signature}` : ''
+				body: composeBody(EMPTY_LINE, account?.signature ?? null)
 			};
 		}
 	} catch (e) {
@@ -143,7 +145,8 @@ async function draftFromForm(userId: string, form: FormData) {
 		cc: parseAddressList(text('cc')),
 		bcc: parseAddressList(text('bcc')),
 		subject: text('subject'),
-		text: text('body').replace(/\r\n/g, '\n'),
+		// The editor's HTML comes from the browser; it is always sanitized again here.
+		html: sanitizeEmailHtml(text('body')).html,
 		inReplyTo: text('inReplyTo') || null,
 		references: text('references').split(/\s+/).filter(Boolean),
 		attachments: [...carried, ...uploads]

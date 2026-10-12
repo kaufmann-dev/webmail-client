@@ -1,4 +1,6 @@
+import { EMPTY_LINE, QUOTE_STYLE } from '../../html';
 import type { Address } from '../../mail-types';
+import { escapeHtml } from './render';
 
 /** The parts of an original message that a reply or forward is derived from. */
 export interface OriginalMessage {
@@ -10,7 +12,8 @@ export interface OriginalMessage {
 	to: Address[];
 	cc: Address[];
 	date: Date | null;
-	text: string;
+	/** The sanitized HTML body (plain-text messages converted to HTML). */
+	html: string;
 }
 
 const PREFIX = /^\s*(?:re|aw|antw|sv|fwd?|wg|tr|rv)\s*(?:\[\d+\])?\s*:\s*/i;
@@ -95,19 +98,16 @@ function formatDate(date: Date | null): string {
 	return date ? date.toUTCString() : 'an unknown date';
 }
 
-/** Quoted original for the bottom of a reply. */
-export function quoteOriginal(original: Pick<OriginalMessage, 'from' | 'date' | 'text'>): string {
+/** Quoted original for the bottom of a reply: an attribution line and the original HTML. */
+export function quoteOriginal(original: Pick<OriginalMessage, 'from' | 'date' | 'html'>): string {
 	const who = original.from ? formatAddress(original.from) : 'someone';
-	const body = original.text
-		.replace(/\r\n/g, '\n')
-		.trimEnd()
-		.split('\n')
-		.map((line) => (line.startsWith('>') ? `>${line}` : `> ${line}`))
-		.join('\n');
-	return `On ${formatDate(original.date)}, ${who} wrote:\n${body}`;
+	return (
+		`<div>On ${escapeHtml(formatDate(original.date))}, ${escapeHtml(who)} wrote:</div>` +
+		`<blockquote style="${QUOTE_STYLE}">${original.html}</blockquote>`
+	);
 }
 
-/** Header block and text of a forwarded message. */
+/** Header block and body of a forwarded message. */
 export function forwardedBlock(original: OriginalMessage): string {
 	const lines = [
 		'---------- Forwarded message ---------',
@@ -117,13 +117,16 @@ export function forwardedBlock(original: OriginalMessage): string {
 		`To: ${original.to.map(formatAddress).join(', ')}`
 	];
 	if (original.cc.length) lines.push(`Cc: ${original.cc.map(formatAddress).join(', ')}`);
-	return `${lines.join('\n')}\n\n${original.text.replace(/\r\n/g, '\n').trimEnd()}`;
+	return `<div>${lines.map(escapeHtml).join('<br>')}</div><br>${original.html}`;
 }
 
-/** Assembles the plain-text body: the user's text, the signature, then any quoted material. */
-export function composeBody(text: string, signature: string | null, quoted?: string): string {
-	const parts = [text.trimEnd()];
-	if (signature?.trim()) parts.push(`-- \n${signature.trimEnd()}`);
-	if (quoted) parts.push(quoted);
-	return parts.filter((part, index) => index === 0 || part).join('\n\n');
+/**
+ * Assembles the HTML body: the user's text, the signature, then any quoted material. The
+ * `wm-signature` wrapper lets the editor swap the signature when the sender changes.
+ */
+export function composeBody(html: string, signature: string | null, quoted?: string): string {
+	let body = html;
+	if (signature) body += `${EMPTY_LINE}<div class="wm-signature">${signature}</div>`;
+	if (quoted) body += `${EMPTY_LINE}<div class="wm-quote">${quoted}</div>`;
+	return body;
 }

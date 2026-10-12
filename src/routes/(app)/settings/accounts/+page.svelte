@@ -9,6 +9,7 @@
 	import ArrowUp from '@lucide/svelte/icons/arrow-up';
 	import Plus from '@lucide/svelte/icons/plus';
 	import AccountSwatch from '#lib/components/account-swatch.svelte';
+	import HtmlEditor from '#lib/components/mail/html-editor.svelte';
 	import TooltipButton from '#lib/components/tooltip-button.svelte';
 	import * as Alert from '#lib/components/ui/alert/index.js';
 	import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
@@ -16,7 +17,6 @@
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { Label } from '#lib/components/ui/label/index.js';
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
-	import { Textarea } from '#lib/components/ui/textarea/index.js';
 	import { postAction } from '#lib/form-action.js';
 	import { ACCOUNT_COLORS, PROVIDER_LABELS, type AccountSummary } from '#lib/mail-types.js';
 
@@ -173,12 +173,12 @@
 						</div>
 					</div>
 					<div class="grid gap-1.5">
-						<Label for="signature-{account.id}">Signature</Label>
-						<Textarea
-							id="signature-{account.id}"
+						<Label>Signature</Label>
+						<HtmlEditor
 							name="signature"
 							value={account.signature ?? ''}
-							rows={4}
+							label="Signature for {account.email}"
+							minHeight={120}
 						/>
 					</div>
 					{#if account.provider !== 'microsoft'}

@@ -86,6 +86,7 @@ export interface AccountSummary {
 	displayName: string;
 	label: string;
 	color: AccountColor;
+	/** Sanitized HTML, or null without a signature. */
 	signature: string | null;
 	lastError: string | null;
 }
@@ -175,6 +176,7 @@ export interface ComposeState {
 	cc: string;
 	bcc: string;
 	subject: string;
+	/** The editor HTML. */
 	body: string;
 	inReplyTo: string;
 	references: string;

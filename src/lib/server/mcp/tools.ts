@@ -31,6 +31,7 @@ import {
 	setFlags,
 	type MessageFilters
 } from '../mail/messages';
+import { textToComposeHtml } from '../mail/html-body';
 import { composeBody, formatAddress, looksLikeReplySubject } from '../mail/threading';
 import type { MailAccount } from '../mail/types';
 import { McpAccess, McpAccessError } from './access';
@@ -147,8 +148,9 @@ function attachmentsFrom(input: z.infer<typeof attachmentInput>): OutgoingAttach
 	}));
 }
 
+/** The AI's plain text as HTML above the signature and quote. */
 function withBody(body: string, suffix: string): string {
-	return `${body.trimEnd()}\n\n${suffix}`;
+	return textToComposeHtml(body) + suffix;
 }
 
 /** One server per request, holding the client's grants for that request. */
@@ -475,7 +477,12 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 				'Always use this, never compose_new_message, to answer an email.',
 			inputSchema: z.object({
 				message_ref: messageRef,
-				body: z.string().min(1).describe('Your reply text only; the quote is added automatically.'),
+				body: z
+					.string()
+					.min(1)
+					.describe(
+						'Your reply as plain text only; it is sent as HTML with the signature and the quote added automatically.'
+					),
 				reply_all: z.boolean().default(false),
 				extra_cc: recipientList.optional(),
 				attachments: attachmentInput,
@@ -489,7 +496,7 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 				const draft: Draft = {
 					...prepared.draft,
 					cc: [...prepared.draft.cc, ...parseAddressList(extra_cc ?? [])],
-					text: withBody(body, prepared.suffix),
+					html: withBody(body, prepared.suffix),
 					attachments: attachmentsFrom(attachments)
 				};
 				return deliver(draft, how, { answersRef: message_ref });
@@ -507,7 +514,7 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 				message_ref: messageRef,
 				to: recipientList.min(1),
 				cc: recipientList.optional(),
-				body: z.string().default('').describe('A note above the forwarded message.'),
+				body: z.string().default('').describe('A plain-text note above the forwarded message.'),
 				include_attachments: z.boolean().default(true),
 				mode
 			})
@@ -523,7 +530,7 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 					...prepared.draft,
 					to: parseAddressList(to),
 					cc: parseAddressList(cc ?? []),
-					text: withBody(body, prepared.suffix)
+					html: withBody(body, prepared.suffix)
 				};
 				return deliver(draft, how);
 			})
@@ -542,7 +549,10 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 				cc: recipientList.optional(),
 				bcc: recipientList.optional(),
 				subject: z.string().min(1).max(998),
-				body: z.string().min(1),
+				body: z
+					.string()
+					.min(1)
+					.describe('Plain text; it is sent as HTML with the account signature added.'),
 				attachments: attachmentInput,
 				mode
 			})
@@ -563,7 +573,7 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 					cc: parseAddressList(cc ?? []),
 					bcc: parseAddressList(bcc ?? []),
 					subject,
-					text: composeBody(body, account.signature),
+					html: composeBody(textToComposeHtml(body), account.signature),
 					inReplyTo: null,
 					references: [],
 					attachments: attachmentsFrom(attachments)
