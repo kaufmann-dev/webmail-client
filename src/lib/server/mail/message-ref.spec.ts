@@ -26,7 +26,7 @@ describe('message refs', () => {
 		const locator: MessageLocator = {
 			kind: 'ews',
 			accountId: 'a2',
-			path: 'Posteingang/Schule',
+			path: 'Posteingang/Projekte',
 			itemId: 'AAMkADk0ZjQ+/=='
 		};
 		const ref = encodeMessageRef(locator);

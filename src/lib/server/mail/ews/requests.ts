@@ -124,8 +124,9 @@ function quoted(value: string): string {
 	return `"${value.replace(/"/g, '').trim()}"`;
 }
 
+/** An AQS date: month/day/year, as the en-US mailbox culture of every request reads it. */
 function day(date: Date): string {
-	return date.toISOString().slice(0, 10);
+	return `${date.getUTCMonth() + 1}/${date.getUTCDate()}/${date.getUTCFullYear()}`;
 }
 
 /**
@@ -144,8 +145,8 @@ export function queryString(filters: MessageFilters): string | null {
 	if (unread !== undefined) parts.push(`isread:${!unread}`);
 	const starred = starredWanted(filters);
 	if (starred !== undefined) parts.push(`isflagged:${starred}`);
-	if (filters.since) parts.push(`received>=${day(filters.since)}`);
-	if (filters.before) parts.push(`received<${day(filters.before)}`);
+	if (filters.since) parts.push(`received:>=${day(filters.since)}`);
+	if (filters.before) parts.push(`received:<${day(filters.before)}`);
 	return parts.join(' ');
 }
 

@@ -42,7 +42,7 @@ describe('responseMessages', () => {
 	});
 
 	it('keeps large escaped HTML bodies intact', () => {
-		const html = '<p>x &amp; y</p>'.repeat(20_000);
+		const html = '<p>x &amp; y&#xD;\nz</p>'.repeat(20_000);
 		const escaped = html.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 		const [message] = responseMessages(
 			soap(
@@ -52,6 +52,20 @@ describe('responseMessages', () => {
 			)
 		);
 		expect(firstItem(message)?.node.Body).toEqual({ '#text': html, BodyType: 'HTML' });
+	});
+
+	it('decodes numeric character references once', () => {
+		const [message] = responseMessages(
+			soap(
+				'<m:GetItemResponse><m:ResponseMessages><m:GetItemResponseMessage ResponseClass="Success">' +
+					'<m:Items><t:Message><t:TextBody BodyType="Text">Hallo&#xD;\nGr&#252;&#xDF;e &amp;#xD;</t:TextBody>' +
+					'</t:Message></m:Items></m:GetItemResponseMessage></m:ResponseMessages></m:GetItemResponse>'
+			)
+		);
+		expect(firstItem(message)?.node.TextBody).toEqual({
+			'#text': 'Hallo\r\nGrüße &#xD;',
+			BodyType: 'Text'
+		});
 	});
 });
 
@@ -69,7 +83,7 @@ describe('buildFolders', () => {
 				'<m:FindFolderResponse><m:ResponseMessages><m:FindFolderResponseMessage ResponseClass="Success">' +
 					'<m:RootFolder IncludesLastItemInRange="true"><t:Folders>' +
 					folder('in', 'root', 'Posteingang', '<t:FolderClass>IPF.Note</t:FolderClass>') +
-					folder('sub', 'in', 'Schule', '<t:FolderClass>IPF.Note</t:FolderClass>') +
+					folder('sub', 'in', 'Projekte', '<t:FolderClass>IPF.Note</t:FolderClass>') +
 					folder('arc', 'root', 'Archiv', '<t:FolderClass>IPF.Note</t:FolderClass>') +
 					folder('out', 'root', 'Postausgang', '<t:FolderClass>IPF.Note</t:FolderClass>') +
 					folder(
@@ -99,16 +113,16 @@ describe('buildFolders', () => {
 		);
 		expect(result.folders).toEqual([
 			{ path: 'Posteingang', name: 'Posteingang', depth: 0, role: 'inbox' },
-			{ path: 'Posteingang/Schule', name: 'Schule', depth: 1, role: null },
+			{ path: 'Posteingang/Projekte', name: 'Projekte', depth: 1, role: null },
 			{ path: 'Archiv', name: 'Archiv', depth: 0, role: 'archive' }
 		]);
-		expect(result.idByPath.get('Posteingang/Schule')).toBe('sub');
+		expect(result.idByPath.get('Posteingang/Projekte')).toBe('sub');
 		expect(result.pathById.get('arc')).toBe('Archiv');
 	});
 });
 
 const MESSAGE =
-	'<t:Message><t:ItemId Id="AAMk/1+x=" ChangeKey="CQ"/><t:Subject>Konferenz</t:Subject>' +
+	'<t:Message><t:ItemId Id="AAMk/1+x=" ChangeKey="CQ"/><t:Subject>Meeting</t:Subject>' +
 	'<t:DateTimeReceived>2026-10-12T08:30:00Z</t:DateTimeReceived><t:HasAttachments>true</t:HasAttachments>' +
 	'<t:IsDraft>false</t:IsDraft><t:Flag><t:FlagStatus>Flagged</t:FlagStatus></t:Flag>' +
 	'<t:Attachments><t:FileAttachment><t:AttachmentId Id="att/1+"/><t:Name>Plan.pdf</t:Name>' +
@@ -117,11 +131,11 @@ const MESSAGE =
 	'<t:ContentId>logo@x</t:ContentId><t:Size>10</t:Size><t:IsInline>true</t:IsInline></t:FileAttachment>' +
 	'<t:ItemAttachment><t:AttachmentId Id="att3"/><t:Name>Re: Termin</t:Name><t:Size>99</t:Size>' +
 	'<t:IsInline>false</t:IsInline></t:ItemAttachment></t:Attachments>' +
-	'<t:IsRead>false</t:IsRead><t:From><t:Mailbox><t:Name>Direktion</t:Name>' +
-	'<t:EmailAddress>direktion@schule.at</t:EmailAddress><t:RoutingType>SMTP</t:RoutingType></t:Mailbox></t:From>' +
-	'<t:ToRecipients><t:Mailbox><t:Name>A</t:Name><t:EmailAddress>a@schule.at</t:EmailAddress></t:Mailbox>' +
-	'<t:Mailbox><t:Name>B</t:Name><t:EmailAddress>b@schule.at</t:EmailAddress></t:Mailbox></t:ToRecipients>' +
-	'<t:InternetMessageId>&lt;1@schule.at&gt;</t:InternetMessageId></t:Message>';
+	'<t:IsRead>false</t:IsRead><t:From><t:Mailbox><t:Name>Office</t:Name>' +
+	'<t:EmailAddress>office@example.org</t:EmailAddress><t:RoutingType>SMTP</t:RoutingType></t:Mailbox></t:From>' +
+	'<t:ToRecipients><t:Mailbox><t:Name>A</t:Name><t:EmailAddress>a@example.org</t:EmailAddress></t:Mailbox>' +
+	'<t:Mailbox><t:Name>B</t:Name><t:EmailAddress>b@example.org</t:EmailAddress></t:Mailbox></t:ToRecipients>' +
+	'<t:InternetMessageId>&lt;1@example.org&gt;</t:InternetMessageId></t:Message>';
 
 describe('items', () => {
 	const [message] = responseMessages(
@@ -137,18 +151,18 @@ describe('items', () => {
 		expect(summary).toMatchObject({
 			accountId: 'acc',
 			cursor: 3,
-			from: { name: 'Direktion', address: 'direktion@schule.at' },
+			from: { name: 'Office', address: 'office@example.org' },
 			to: [
-				{ name: 'A', address: 'a@schule.at' },
-				{ name: 'B', address: 'b@schule.at' }
+				{ name: 'A', address: 'a@example.org' },
+				{ name: 'B', address: 'b@example.org' }
 			],
-			subject: 'Konferenz',
+			subject: 'Meeting',
 			date: '2026-10-12T08:30:00.000Z',
 			unread: true,
 			starred: true,
 			draft: false,
 			hasAttachments: true,
-			messageId: '<1@schule.at>'
+			messageId: '<1@example.org>'
 		});
 		expect(decodeMessageRef(summary.ref)).toEqual({
 			kind: 'ews',
@@ -199,7 +213,7 @@ describe('requests', () => {
 	it('turns text searches into an escaped AQS query instead', () => {
 		const xml = request.findItems(
 			'F<1>',
-			{ query: 'Zeugnis & Noten', from: 'a"b', filter: 'unread' },
+			{ query: 'Budget & Plan', from: 'a"b', filter: 'unread' },
 			50,
 			25
 		);
@@ -207,7 +221,10 @@ describe('requests', () => {
 		expect(xml).toContain('<t:FolderId Id="F&lt;1&gt;"/>');
 		expect(xml).toContain('Offset="50"');
 		expect(xml).toContain(
-			'<m:QueryString>Zeugnis &amp; Noten from:&quot;ab&quot; isread:false</m:QueryString>'
+			'<m:QueryString>Budget &amp; Plan from:&quot;ab&quot; isread:false</m:QueryString>'
+		);
+		expect(request.queryString({ query: 'invoice', since: new Date('2026-10-04T13:00:00Z') })).toBe(
+			'invoice received:>=10/4/2026'
 		);
 	});
 

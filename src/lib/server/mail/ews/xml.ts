@@ -12,7 +12,9 @@ const parser = new XMLParser({
 	attributeNamePrefix: '',
 	parseTagValue: false,
 	parseAttributeValue: false,
-	ignoreDeclaration: true
+	ignoreDeclaration: true,
+	// Exchange escapes carriage returns and other characters as numeric references (`&#xD;`).
+	htmlEntities: true
 });
 
 export function parseXml(xml: string): XmlNode {

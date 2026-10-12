@@ -19,7 +19,9 @@ function envelope(body: string): string {
 		'<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"' +
 		' xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"' +
 		' xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">' +
-		'<soap:Header><t:RequestServerVersion Version="Exchange2013_SP1"/></soap:Header>' +
+		// en-US makes AQS read dates as month/day/year and keeps server messages in English.
+		'<soap:Header><t:RequestServerVersion Version="Exchange2013_SP1"/>' +
+		'<t:MailboxCulture>en-US</t:MailboxCulture></soap:Header>' +
 		`<soap:Body>${body}</soap:Body></soap:Envelope>`
 	);
 }
