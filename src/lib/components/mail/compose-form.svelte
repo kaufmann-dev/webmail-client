@@ -5,10 +5,12 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { toast } from 'svelte-sonner';
+	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
 	import Paperclip from '@lucide/svelte/icons/paperclip';
 	import Send from '@lucide/svelte/icons/send';
 	import X from '@lucide/svelte/icons/x';
 	import AccountSwatch from '#lib/components/account-swatch.svelte';
+	import TooltipButton from '#lib/components/tooltip-button.svelte';
 	import * as Alert from '#lib/components/ui/alert/index.js';
 	import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -52,6 +54,22 @@
 		dirty = false;
 		if (history.length > 1) history.back();
 		else goto(resolve('/(app)/mail/[scope]/[...folder]', { scope: 'all', folder: 'inbox' }));
+	}
+
+	/** Goes back to where the editor was opened from; unsaved changes ask first. */
+	function close() {
+		if (history.length > 1) history.back();
+		else {
+			const folder = initial.mode === 'draft' ? 'drafts' : 'inbox';
+			const scope = initial.mode === 'draft' ? accountId : 'all';
+			goto(resolve('/(app)/mail/[scope]/[...folder]', { scope, folder }));
+		}
+	}
+
+	function onkeydown(event: KeyboardEvent) {
+		if (event.key !== 'Escape' || event.defaultPrevented || confirmDiscard || pending) return;
+		event.preventDefault();
+		close();
 	}
 
 	beforeNavigate((navigation) => {
@@ -138,11 +156,18 @@
 </script>
 
 <svelte:head><title>{heading} · Mail</title></svelte:head>
+<svelte:window {onkeydown} />
 
 <div
 	class="relative mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col overflow-y-auto px-4 py-6"
 >
-	<h1 class="mb-4 text-xl font-semibold">{heading}</h1>
+	<div class="mb-4 flex items-center gap-2">
+		<TooltipButton variant="ghost" size="sm" tooltip="Back" shortcut="Esc" onclick={close}>
+			<ArrowLeft />
+			<span class="sr-only">Back</span>
+		</TooltipButton>
+		<h1 class="text-xl font-semibold">{heading}</h1>
+	</div>
 
 	{#if !accounts.length}
 		<p class="text-sm">
