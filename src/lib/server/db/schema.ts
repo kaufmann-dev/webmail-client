@@ -82,3 +82,27 @@ export const mcpAccountAccess = pgTable(
 		index('mcp_account_access_user_client_idx').on(table.userId, table.clientId)
 	]
 );
+
+/**
+ * Short MCP message refs. AI clients get these instead of the long provider locators
+ * (`message-ref.ts`), and they stay valid when a message moves: moves through the MCP tools
+ * update `locator`, and a message moved elsewhere is found again by its Message-ID header.
+ * Only identifiers are stored, never mail content.
+ */
+export const mcpMessageRef = pgTable(
+	'mcp_message_ref',
+	{
+		id: text('id').primaryKey(),
+		userId: text('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		accountId: text('account_id')
+			.notNull()
+			.references(() => mailAccount.id, { onDelete: 'cascade' }),
+		/** The message's current ref from `encodeMessageRef`. */
+		locator: text('locator').notNull(),
+		messageId: text('message_id'),
+		createdAt: timestamp('created_at').defaultNow().notNull()
+	},
+	(table) => [unique('mcp_message_ref_locator_uq').on(table.userId, table.locator)]
+);

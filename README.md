@@ -27,7 +27,8 @@ and on the consent screen you choose which mail accounts each app may use and at
   to the recipient's mail program, or pick a common font such as Calibri. Replies keep `In-Reply-To` and
   `References`, so they stay in the conversation.
 - **Live IMAP/SMTP and Exchange:** mail is never copied into the database. The database stores only
-  the app's own data: accounts with encrypted credentials, signatures, and MCP grants.
+  the app's own data: accounts with encrypted credentials, signatures, MCP grants, and the short
+  message refs MCP clients use.
 
 Stack: SvelteKit 3 (adapter-node) with Svelte 5, Tailwind and shadcn-svelte, Drizzle and PostgreSQL,
 Better Auth (Pocket ID sign-in and the MCP OAuth server), the MCP TypeScript SDK v2, imapflow,
@@ -134,10 +135,10 @@ shows these steps with copyable commands for the deployed URL.
 | ----------------------- | ---------------- | --------------------------------------------------------------------------------- |
 | `list_accounts`         | Read             | Granted accounts with their access levels and limits                              |
 | `list_folders`          | Read             | An account's folders, with roles (inbox, drafts, sent, archive, spam, trash)      |
-| `list_messages`         | Read             | A folder across one or all granted accounts, newest first, with paging            |
+| `list_messages`         | Read             | A folder across one or all granted accounts, newest first, with previews, paging  |
 | `search_messages`       | Read             | Search by text, sender, recipient, subject, date, unread, or starred              |
 | `get_message`           | Read             | Headers, body, attachments (if allowed), invitation; does not mark it read        |
-| `get_thread`            | Read             | Other messages of the same conversation, sent ones included                       |
+| `get_thread`            | Read             | The whole conversation with each message's new text, sent ones included           |
 | `get_attachment`        | Read             | An attachment as text, image, or base64 (up to 10 MB), if attachments are allowed |
 | `update_messages`       | Read & organize  | Mark read/unread, star, archive, trash, spam, or move                             |
 | `reply_to_message`      | Organize or Full | Threaded reply or reply-all with the quote; `mode` is `draft` (default) or `send` |
@@ -147,11 +148,24 @@ shows these steps with copyable commands for the deployed URL.
 | `respond_to_invitation` | Full             | Accept, tentatively accept, or decline an invitation; sends immediately           |
 
 Every tool that lists or uses messages only reaches those within the account's time window.
-Messages are addressed by an opaque `message_ref`. The reply and forward tools derive the subject,
-recipients, and threading headers from the original message, so "reply to this email" always
-stays in the conversation. Bodies from AI clients are plain text; they are sent as HTML mail with
-the account's signature. Sending tools save a draft unless the request explicitly says to send;
-`respond_to_invitation` has no draft mode and sends its answer at once.
+Messages are addressed by a short `message_ref` (10 characters) that stays valid when the message
+moves. The tools are built for an AI reviewing a mailbox in few calls and few tokens:
+
+- **Lists:** each message has a one-line `preview` of its new text without quotes
+  (`include_preview: false` turns it off). `group_by: "thread"` returns one entry per
+  conversation with participants, counts, the last sender, `last_from_me` (looked up in Sent), and
+  the preview of the latest message.
+- **Bodies:** plain text converted from the HTML, with tables as Markdown and embedded images as
+  `[image: name]`. `get_message` with `include_quoted: false` and `get_thread` (by default) return
+  only each message's new text; forwards keep the forwarded message.
+- **Compact results:** boolean flags appear only when true, `account` only when results span several
+  accounts, and `to` in lists only when it is not just the account itself.
+
+The reply and forward tools derive the subject, recipients, and threading headers from the original
+message, so "reply to this email" always stays in the conversation. Bodies from AI clients are
+plain text; they are sent as HTML mail with the account's signature. Sending tools save a draft
+unless the request explicitly says to send; `respond_to_invitation` has no draft mode and sends its
+answer at once.
 
 ## Authentication Setup
 

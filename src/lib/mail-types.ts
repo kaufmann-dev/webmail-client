@@ -112,6 +112,16 @@ export interface MessageSummary {
 	draft: boolean;
 	hasAttachments: boolean;
 	messageId: string | null;
+	/** Conversation keys, only when a list asked for them (MCP `group_by: "thread"`). */
+	thread?: ThreadKeys;
+}
+
+/** What links a message to its conversation. */
+export interface ThreadKeys {
+	/** The provider's conversation ID: Exchange ConversationId, Gmail X-GM-THRID, or THREADID. */
+	id: string | null;
+	inReplyTo: string | null;
+	references: string[];
 }
 
 export interface AttachmentInfo {

@@ -128,3 +128,71 @@ export function assembleSource(
 	body(root);
 	return Buffer.concat(chunks);
 }
+
+/** The body part a list preview is read from, and how to decode it. */
+export interface PreviewPart {
+	partId: string;
+	html: boolean;
+	encoding: string;
+	charset: string;
+}
+
+/** The first plain-text body part, else the first HTML one; null for messages without text. */
+export function previewPart(root: MessageStructureObject | undefined): PreviewPart | null {
+	if (!root) return null;
+	const candidates: { node: MessageStructureObject; partId: string }[] = [];
+	const walk = (node: MessageStructureObject, partId: string) => {
+		if (isMultipart(node)) {
+			for (const child of node.childNodes ?? []) walk(child, child.part ?? '1');
+		} else if (node.disposition !== 'attachment' && BODY_TYPES.has(node.type)) {
+			candidates.push({ node, partId });
+		}
+	};
+	walk(root, '1');
+	const found =
+		candidates.find((c) => c.node.type === 'text/plain') ??
+		candidates.find((c) => c.node.type === 'text/html');
+	if (!found) return null;
+	return {
+		partId: found.partId,
+		html: found.node.type === 'text/html',
+		encoding: (found.node.encoding ?? '7bit').toLowerCase(),
+		charset: found.node.parameters?.charset ?? 'utf-8'
+	};
+}
+
+function decodeQuotedPrintable(text: string): Buffer {
+	const bytes: number[] = [];
+	const source = text.replace(/=\r?\n/g, '').replace(/=[0-9A-Fa-f]?$/, '');
+	for (let i = 0; i < source.length; i++) {
+		const hex = source[i] === '=' ? source.slice(i + 1, i + 3) : '';
+		if (/^[0-9A-Fa-f]{2}$/.test(hex)) {
+			bytes.push(parseInt(hex, 16));
+			i += 2;
+		} else {
+			bytes.push(source.charCodeAt(i) & 0xff);
+		}
+	}
+	return Buffer.from(bytes);
+}
+
+/**
+ * Text from the start of a body part, which may end in the middle of an encoded sequence or a
+ * character: incomplete trailing input is dropped.
+ */
+export function decodePartStart(content: Buffer, part: Pick<PreviewPart, 'encoding' | 'charset'>) {
+	let bytes = content;
+	if (part.encoding === 'base64') {
+		const clean = content.toString('latin1').replace(/[^A-Za-z0-9+/=]/g, '');
+		bytes = Buffer.from(clean.slice(0, clean.length - (clean.length % 4)), 'base64');
+	} else if (part.encoding === 'quoted-printable') {
+		bytes = decodeQuotedPrintable(content.toString('latin1'));
+	}
+	let decoder: TextDecoder;
+	try {
+		decoder = new TextDecoder(part.charset);
+	} catch {
+		decoder = new TextDecoder('utf-8');
+	}
+	return decoder.decode(bytes).replace(/�+$/, '');
+}

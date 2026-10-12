@@ -12,9 +12,11 @@ import type {
 	ListFilter,
 	MessageDetail,
 	MessagePage,
-	MessageSummary
+	MessageSummary,
+	ThreadKeys
 } from '../../mail-types';
 import { getAccount } from './accounts';
+import { bodyText, previewOf } from './body-text';
 import { errorMessage, MailError } from './errors';
 import * as ews from './ews/messages';
 import { ensureArchiveFolder, requireFolder, resolveFolder } from './folders';
@@ -30,7 +32,14 @@ import {
 	type MessageLocator
 } from './message-ref';
 import { sanitizeEmailHtml, textToHtml } from './render';
-import { assembleSource, planMessage, type StructurePart } from './structure';
+import {
+	assembleSource,
+	decodePartStart,
+	planMessage,
+	previewPart,
+	type PreviewPart,
+	type StructurePart
+} from './structure';
 import type { MailAccount } from './types';
 
 export const DEFAULT_PAGE_SIZE = 50;
@@ -54,6 +63,25 @@ const SUMMARY_FETCH = {
 	internalDate: true,
 	bodyStructure: true
 } as const;
+
+/** Summaries with their conversation keys: Gmail's or the server's thread ID, and References. */
+const THREAD_FETCH = { ...SUMMARY_FETCH, threadId: true, headers: ['references'] };
+
+const MESSAGE_ID = /<[^<>\s]+>/g;
+
+/** The Message-IDs of a fetched `References` header. */
+export function referencesOf(headers: Buffer | undefined): string[] {
+	const value = headers?.toString('utf8').replace(/^references:/i, '') ?? '';
+	return value.match(MESSAGE_ID) ?? [];
+}
+
+function threadKeys(message: FetchMessageObject): ThreadKeys {
+	return {
+		id: message.threadId ?? null,
+		inReplyTo: message.envelope?.inReplyTo ?? null,
+		references: referencesOf(message.headers)
+	};
+}
 
 function address(entry: MessageAddressObject | undefined): Address | null {
 	return entry?.address ? { name: entry.name ?? '', address: entry.address } : null;
@@ -101,7 +129,8 @@ function toSummary(
 		starred: flags.has('\\Flagged'),
 		draft: flags.has('\\Draft'),
 		hasAttachments: hasAttachment(message.bodyStructure),
-		messageId: envelope.messageId ?? null
+		messageId: envelope.messageId ?? null,
+		...(message.headers || message.threadId ? { thread: threadKeys(message) } : {})
 	};
 }
 
@@ -130,7 +159,8 @@ async function fetchAccountPage(
 	path: string,
 	search: SearchObject,
 	beforeUid: number | undefined,
-	limit: number
+	limit: number,
+	threads: boolean
 ): Promise<AccountPage> {
 	return withMailbox(account, path, async (client, mailbox) => {
 		if (beforeUid !== undefined && beforeUid <= 1) {
@@ -142,7 +172,9 @@ async function fetchAccountPage(
 		const found = ((await client.search(query, { uid: true })) || []).sort((a, b) => a - b);
 		const picked = found.slice(-limit);
 		if (!picked.length) return { accountId: account.id, items: [], exhausted: true };
-		const fetched = await client.fetchAll(picked, SUMMARY_FETCH, { uid: true });
+		const fetched = await client.fetchAll(picked, threads ? THREAD_FETCH : SUMMARY_FETCH, {
+			uid: true
+		});
 		return {
 			accountId: account.id,
 			items: fetched
@@ -169,6 +201,8 @@ function withinWindow(filters: MessageFilters, notBefore: Date): MessageFilters 
 export interface ListOptions {
 	/** Per account ID: leave out messages received before this time (MCP time windows). */
 	notBefore?: Map<string, Date>;
+	/** Include each message's conversation keys (`MessageSummary.thread`). */
+	threads?: boolean;
 }
 
 /**
@@ -196,13 +230,16 @@ export async function listMessages(
 					const accountFilters = notBefore ? withinWindow(filters, notBefore) : filters;
 					const page =
 						account.provider === 'exchange'
-							? await ews.listPage(account, path, accountFilters, cursor[account.id], limit)
+							? await ews.listPage(account, path, accountFilters, cursor[account.id], limit, {
+									threads: options.threads
+								})
 							: await fetchAccountPage(
 									account,
 									path,
 									buildSearch(account, accountFilters),
 									cursor[account.id],
-									limit
+									limit,
+									options.threads ?? false
 								);
 					return notBefore ? trimPage(page, notBefore) : page;
 				} catch (error) {
@@ -297,7 +334,10 @@ function references(parsed: ParsedMail): string[] {
 }
 
 export interface ReadMessage {
+	/** `detail.text` is the clean plain text of the body (`body-text.ts`). */
 	detail: MessageDetail;
+	/** The body above the first quoted message, or null when nothing is quoted. */
+	newText: string | null;
 	/** The Date header, when the message was sent. */
 	sentAt: Date | null;
 	/** The invitation's iCalendar text, when the message carries one. */
@@ -308,11 +348,47 @@ function attachmentName(part: StructurePart): string {
 	return part.filename ?? `attachment-${part.partId}`;
 }
 
+/** Embedded images inlined as data URIs, at most this much per message (as mailparser does). */
+const MAX_INLINED_BYTES = 20 * 1024 * 1024;
+
+/** Replaces `cid:` references to embedded images with data URIs. */
+function inlineImages(html: string, parsed: ParsedMail): string {
+	const images = new Map(
+		parsed.attachments
+			.filter((a) => a.cid && /^image\/[\w.+-]+$/i.test(a.contentType))
+			.map((a) => [a.cid!, a] as const)
+	);
+	let budget = MAX_INLINED_BYTES;
+	return html.replace(/\bcid:([^'"\s]{1,256})/g, (match, cid: string) => {
+		const image = images.get(cid);
+		if (!image) return match;
+		const uri = `data:${image.contentType};base64,${image.content.toString('base64')}`;
+		if (uri.length > budget) return match;
+		budget -= uri.length;
+		return uri;
+	});
+}
+
+/** File names of embedded images by Content-ID, for `[image: name]` in the text. */
+function imageNames(parsed: ParsedMail): Map<string, string> {
+	return new Map(
+		parsed.attachments.flatMap((a) => (a.cid && a.filename ? [[a.cid, a.filename] as const] : []))
+	);
+}
+
 async function readImapMessage(account: MailAccount, locator: ImapLocator): Promise<ReadMessage> {
 	const { message, mailbox, plan, source } = await fetchForReading(account, locator);
-	const parsed = await simpleParser(source);
+	// Images stay `cid:` links until the text is taken, which names them by file name.
+	const parsed = await simpleParser(source, { skipImageLinks: true });
 	const summary = toSummary(account, locator.path, mailbox, message);
-	const html = parsed.html ? sanitizeEmailHtml(parsed.html) : null;
+	const subject = parsed.subject ?? summary.subject;
+	const body = bodyText({
+		html: parsed.html || null,
+		text: parsed.text ?? '',
+		subject,
+		images: imageNames(parsed)
+	});
+	const html = parsed.html ? sanitizeEmailHtml(inlineImages(parsed.html, parsed)) : null;
 	const calendar = findCalendarPart(parsed.attachments);
 	const invitation = calendar ? parseInvitation(calendar, account.email) : null;
 	const detail: MessageDetail = {
@@ -322,11 +398,11 @@ async function readImapMessage(account: MailAccount, locator: ImapLocator): Prom
 		cc: parsedAddresses(parsed.cc),
 		bcc: parsedAddresses(parsed.bcc),
 		replyTo: parsedAddresses(parsed.replyTo),
-		subject: parsed.subject ?? summary.subject,
+		subject,
 		messageId: parsed.messageId ?? summary.messageId,
 		inReplyTo: parsed.inReplyTo ?? null,
 		references: references(parsed),
-		text: parsed.text ?? '',
+		text: body.text,
 		html: html?.html ?? textToHtml(parsed.text ?? ''),
 		hasRemoteImages: html?.hasRemoteImages ?? false,
 		// An unnamed calendar part is the invitation's machine-readable form, shown as the invitation.
@@ -344,7 +420,7 @@ async function readImapMessage(account: MailAccount, locator: ImapLocator): Prom
 		),
 		invitation
 	};
-	return { detail, sentAt: parsed.date ?? null, calendar };
+	return { detail, newText: body.newText, sentAt: parsed.date ?? null, calendar };
 }
 
 const CACHE_TTL_MS = 10 * 60_000;
@@ -372,8 +448,10 @@ function forget(key: string): void {
 	cachedBytes -= entry.bytes;
 }
 
-function readSize({ detail, calendar }: ReadMessage): number {
-	return 2 * (detail.html.length + detail.text.length + (calendar?.length ?? 0));
+function readSize({ detail, newText, calendar }: ReadMessage): number {
+	return (
+		2 * (detail.html.length + detail.text.length + (newText?.length ?? 0) + (calendar?.length ?? 0))
+	);
 }
 
 /**
@@ -621,8 +699,43 @@ function forgetGroup(group: RefGroup): void {
 
 export type MoveTarget = 'archive' | 'trash' | 'spam' | 'inbox' | { path: string };
 
-/** Moves messages; a no-op for messages already in the target folder. */
-export async function moveMessages(groups: RefGroup[], target: MoveTarget): Promise<void> {
+/**
+ * The refs of moved IMAP messages in their new folder, from the server's COPYUID answer (UIDPLUS);
+ * messages it does not report are missing.
+ */
+export function movedImapRefs(
+	group: Extract<RefGroup, { kind: 'imap' }>,
+	moved: { destination: string; uidValidity?: bigint; uidMap?: Map<number, number> }
+): Map<string, string> {
+	const refs = new Map<string, string>();
+	if (moved.uidValidity === undefined || !moved.uidMap) return refs;
+	for (const locator of groupLocators(group)) {
+		if (locator.kind !== 'imap') continue;
+		const uid = moved.uidMap.get(locator.uid);
+		if (!uid) continue;
+		refs.set(
+			encodeMessageRef(locator),
+			encodeMessageRef({
+				kind: 'imap',
+				accountId: group.account.id,
+				path: moved.destination,
+				uidValidity: String(moved.uidValidity),
+				uid
+			})
+		);
+	}
+	return refs;
+}
+
+/**
+ * Moves messages; a no-op for messages already in the target folder. Returns the new ref of each
+ * moved message by its old ref, as far as the server reports them.
+ */
+export async function moveMessages(
+	groups: RefGroup[],
+	target: MoveTarget
+): Promise<Map<string, string>> {
+	const moved = new Map<string, string>();
 	for (const group of groups) {
 		const destination =
 			target === 'archive'
@@ -632,11 +745,29 @@ export async function moveMessages(groups: RefGroup[], target: MoveTarget): Prom
 					: await requireFolder(group.account, target.path);
 		if (destination === group.path) continue;
 		forgetGroup(group);
-		if (group.kind === 'ews') await ews.moveItems(group.account, group.itemIds, destination);
-		else {
-			await inGroup(group, (client) => client.messageMove(group.uids, destination, { uid: true }));
+		if (group.kind === 'ews') {
+			const ids = await ews.moveItems(group.account, group.itemIds, destination);
+			group.itemIds.forEach((itemId, index) => {
+				const newId = ids[index];
+				if (!newId) return;
+				const accountId = group.account.id;
+				moved.set(
+					encodeMessageRef({ kind: 'ews', accountId, path: group.path, itemId }),
+					encodeMessageRef({ kind: 'ews', accountId, path: destination, itemId: newId })
+				);
+			});
+		} else {
+			const result = await inGroup(group, (client) =>
+				client.messageMove(group.uids, destination, { uid: true })
+			);
+			if (result) {
+				for (const [from, to] of movedImapRefs(group, { ...result, destination })) {
+					moved.set(from, to);
+				}
+			}
 		}
 	}
+	return moved;
 }
 
 /** Permanently deletes messages (flag \Deleted and expunge). Only offered for Trash and Spam. */
@@ -699,4 +830,132 @@ export async function getThread(
 		}
 	}
 	return [...found.values()].sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
+}
+
+/** Bytes read from the start of a body part for a list preview. */
+const PREVIEW_BYTES = { text: 4096, html: 16384 };
+
+/** Previews of IMAP messages in one mailbox: only the start of each text part, never `\Seen`. */
+async function imapPreviews(
+	account: MailAccount,
+	path: string,
+	messages: MessageSummary[],
+	previews: Map<string, string>
+): Promise<void> {
+	const byUid = new Map(
+		messages.flatMap((m) => {
+			const locator = imapLocator(decodeMessageRef(m.ref));
+			return [[locator.uid, { summary: m, locator }] as const];
+		})
+	);
+	await withMailbox(account, path, async (client, mailbox) => {
+		const current = [...byUid.values()].filter(
+			({ locator }) => locator.uidValidity === String(mailbox.uidValidity)
+		);
+		if (!current.length) return;
+		const structures = await client.fetchAll(
+			current.map(({ locator }) => locator.uid),
+			{ uid: true, bodyStructure: true },
+			{ uid: true }
+		);
+		const groups = new Map<string, { part: PreviewPart; uids: number[] }>();
+		for (const message of structures) {
+			const part = previewPart(message.bodyStructure);
+			if (!part) continue;
+			const key = JSON.stringify(part);
+			const group = groups.get(key) ?? { part, uids: [] };
+			group.uids.push(message.uid);
+			groups.set(key, group);
+		}
+		for (const { part, uids } of groups.values()) {
+			const maxLength = part.html ? PREVIEW_BYTES.html : PREVIEW_BYTES.text;
+			const fetched = await client.fetchAll(
+				uids,
+				{ uid: true, bodyParts: [{ key: part.partId, start: 0, maxLength }] },
+				{ uid: true }
+			);
+			for (const message of fetched) {
+				const entry = byUid.get(message.uid);
+				const content = message.bodyParts && [...message.bodyParts.values()][0];
+				if (!entry || !content) continue;
+				const binary = message.binaryParts?.size ? { ...part, encoding: '8bit' } : part;
+				const text = decodePartStart(content, binary);
+				const body = bodyText({
+					html: part.html ? text : null,
+					text: part.html ? '' : text,
+					subject: entry.summary.subject
+				});
+				previews.set(entry.summary.ref, previewOf(body));
+			}
+		}
+	});
+}
+
+/**
+ * One-line previews of listed messages by ref: the new text without quotes, from the start of
+ * the body (IMAP) or Exchange's own preview. Messages that are gone have none.
+ */
+export async function messagePreviews(
+	account: MailAccount,
+	messages: MessageSummary[]
+): Promise<Map<string, string>> {
+	const previews = new Map<string, string>();
+	if (!messages.length) return previews;
+	if (account.provider === 'exchange') {
+		const found = await ews.previews(
+			account,
+			messages.map((m) => ({
+				itemId: ewsLocator(decodeMessageRef(m.ref)).itemId,
+				subject: m.subject
+			}))
+		);
+		messages.forEach((m, index) => {
+			const preview = found[index];
+			if (preview !== null) previews.set(m.ref, preview);
+		});
+		return previews;
+	}
+	const byPath = new Map<string, MessageSummary[]>();
+	for (const message of messages) {
+		const { path } = imapLocator(decodeMessageRef(message.ref));
+		byPath.set(path, [...(byPath.get(path) ?? []), message]);
+	}
+	for (const [path, list] of byPath) await imapPreviews(account, path, list, previews);
+	return previews;
+}
+
+/** Folders searched for a message that moved elsewhere, after its last known one. */
+const FIND_ROLES = ['inbox', 'archive', 'sent', 'drafts', 'trash', 'spam'] as const;
+
+/**
+ * Finds a message by its Message-ID header after it moved without this app (in another mail
+ * program, or by a server rule): its last folder first, then the standard folders. Null when it
+ * is in none of them.
+ */
+export async function findMessage(
+	account: MailAccount,
+	messageId: string,
+	lastPath: string
+): Promise<string | null> {
+	const paths = [lastPath];
+	for (const role of FIND_ROLES) {
+		const path = await resolveFolder(account, role).catch(() => null);
+		if (path && !paths.includes(path)) paths.push(path);
+	}
+	for (const path of paths) {
+		if (account.provider === 'exchange') {
+			const itemId = await ews.findByMessageId(account, path, messageId).catch(() => null);
+			if (itemId) return encodeMessageRef({ kind: 'ews', accountId: account.id, path, itemId });
+			continue;
+		}
+		const found = await withMailbox(account, path, async (client, mailbox) => {
+			const uids =
+				(await client.search({ header: { 'message-id': messageId } }, { uid: true })) || [];
+			return uids.length
+				? { uid: Math.max(...uids), uidValidity: String(mailbox.uidValidity) }
+				: null;
+		}).catch(() => null);
+		if (found) return encodeMessageRef({ kind: 'imap', accountId: account.id, path, ...found });
+	}
+	return null;
 }

@@ -19,30 +19,46 @@ import {
 	type OutgoingAttachment
 } from '../mail/compose';
 import { parseAddressList } from '../mail/addresses';
+import { groupConversations, type Conversation } from '../mail/conversations';
 import { MailError } from '../mail/errors';
 import { getFolders, resolveFolder } from '../mail/folders';
-import { InvalidMessageRefError } from '../mail/message-ref';
+import { decodeMessageRef, InvalidMessageRefError } from '../mail/message-ref';
 import {
+	findMessage,
 	getAttachment,
+	getMessage,
 	getThread,
 	groupRefs,
 	listMessages,
+	messagePreviews,
 	moveMessages,
 	setFlags,
 	type MessageFilters
 } from '../mail/messages';
 import { textToComposeHtml } from '../mail/html-body';
-import { composeBody, formatAddress, looksLikeReplySubject } from '../mail/threading';
+import { baseSubject, composeBody, formatAddress, looksLikeReplySubject } from '../mail/threading';
 import type { MailAccount } from '../mail/types';
 import { McpAccess, McpAccessError } from './access';
+import { McpRefs } from './refs';
 
 const INSTRUCTIONS = `Email server for the user's mail accounts (Gmail, Purelymail, Microsoft 365,
 Exchange). Only the accounts this connection was granted are visible; call list_accounts first.
 Accounts may limit this connection to recent messages or withhold attachments; list_accounts
 shows the limits.
 
-Messages are addressed by an opaque message_ref returned from list_messages, search_messages,
-get_message and get_thread. Pass it back unchanged.
+Messages are addressed by a short message_ref returned from list_messages, search_messages,
+get_message and get_thread. Pass it back unchanged. It stays valid when the message is moved,
+archived or trashed.
+
+To review a mailbox: list_messages with group_by "thread" returns one entry per conversation with
+a preview of its latest message and last_from_me (true when the user sent the last message, so
+nothing is waiting for them). get_thread then returns the whole conversation in one call, each
+message with only its new text. get_message is for a single message with headers, attachments and
+the full quoted body.
+
+Results leave out default values: boolean fields (unread, starred, draft, has_attachments,
+last_from_me, quoted_removed) appear only when true, "account" only when results span several
+accounts, and "to" in lists only when the recipients are not just the account itself.
 
 To respond to an existing email ALWAYS call reply_to_message (or forward_message) with its
 message_ref. These tools set In-Reply-To, References, the "Re:" subject, the recipients and the
@@ -57,7 +73,7 @@ Calendar invitations appear as "invitation" in get_message. Answer one with resp
 only when the user asked to; it sends the answer to the organizer immediately.`;
 
 function json(value: unknown): CallToolResult {
-	return { content: [{ type: 'text', text: JSON.stringify(value, null, 2) }] };
+	return { content: [{ type: 'text', text: JSON.stringify(value) }] };
 }
 
 function failure(message: string): CallToolResult {
@@ -85,18 +101,15 @@ async function guard(fn: () => Promise<CallToolResult | unknown>): Promise<CallT
 
 const addressText = (a: Address | null) => (a ? formatAddress(a) : null);
 
-function summaryOut(message: MessageSummary, accounts: Map<string, MailAccount>) {
+const sameAddress = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+/** Flags that are set; unset ones are left out. */
+function flagsOut(message: MessageSummary) {
 	return {
-		message_ref: message.ref,
-		account: accounts.get(message.accountId)?.email ?? message.accountId,
-		from: addressText(message.from),
-		to: message.to.map(formatAddress),
-		subject: message.subject,
-		date: message.date,
-		unread: message.unread,
-		starred: message.starred,
-		draft: message.draft,
-		has_attachments: message.hasAttachments
+		...(message.unread && { unread: true }),
+		...(message.starred && { starred: true }),
+		...(message.draft && { draft: true }),
+		...(message.hasAttachments && { has_attachments: true })
 	};
 }
 
@@ -116,6 +129,11 @@ function invitationOut(invitation: Invitation) {
 }
 
 const MAX_BODY_CHARS = 100_000;
+const MAX_THREAD_BODY_CHARS = 20_000;
+const MAX_THREAD_MESSAGES = 30;
+const MAX_PARTICIPANTS = 10;
+const SENT_LOOKUP_LIMIT = 200;
+const DAY_MS = 24 * 60 * 60_000;
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 
 const messageRef = z.string().min(1).describe('A message_ref from a listing tool.');
@@ -139,6 +157,18 @@ const attachmentInput = z
 	.max(20)
 	.optional()
 	.describe('Files to attach.');
+const groupBy = z
+	.enum(['message', 'thread'])
+	.default('message')
+	.describe(
+		'"thread" returns one entry per conversation (with last_from_me from the Sent folder) instead of one per message.'
+	);
+const includePreview = z
+	.boolean()
+	.default(true)
+	.describe(
+		"A one-line preview of each message's new text, without quotes (up to 200 characters)."
+	);
 
 function attachmentsFrom(input: z.infer<typeof attachmentInput>): OutgoingAttachment[] {
 	return (input ?? []).map((a) => ({
@@ -153,13 +183,57 @@ function withBody(body: string, suffix: string): string {
 	return textToComposeHtml(body) + suffix;
 }
 
+/** A body for AI clients: the new text only, unless quotes were asked for, and capped. */
+function bodyOut(
+	read: { detail: { text: string }; newText: string | null },
+	includeQuoted: boolean,
+	limit: number
+) {
+	const quotedRemoved = !includeQuoted && read.newText !== null;
+	const body = quotedRemoved ? read.newText! : read.detail.text;
+	const truncated = body.length > limit;
+	return {
+		body: truncated ? body.slice(0, limit) : body,
+		...(quotedRemoved && { quoted_removed: true }),
+		...(truncated && { body_truncated: true })
+	};
+}
+
 /** One server per request, holding the client's grants for that request. */
-export function createMcpServer(userId: string, access: McpAccess): McpServer {
+export function createMcpServer(
+	userId: string,
+	access: McpAccess,
+	refs: McpRefs = new McpRefs(userId)
+): McpServer {
 	const server = new McpServer(
 		{ name: 'webmail', version: '1.0.0' },
 		{ instructions: INSTRUCTIONS }
 	);
 	const accountsById = new Map(access.list().map((g) => [g.account.id, g.account]));
+	const accountEmail = (id: string) => accountsById.get(id)?.email ?? id;
+
+	/**
+	 * Runs `fn` with the mail-layer ref of a short ref. A message that moved without these tools is
+	 * looked up again by its Message-ID, and the short ref follows it.
+	 */
+	async function withMessage<T>(shortRef: string, fn: (ref: string) => Promise<T>): Promise<T> {
+		const row = await refs.resolve(shortRef);
+		try {
+			return await fn(row.locator);
+		} catch (error) {
+			const account = accountsById.get(row.accountId);
+			const gone = error instanceof MailError && (error.status === 404 || error.status === 409);
+			if (!gone || !account || !row.messageId) throw error;
+			const found = await findMessage(account, row.messageId, decodeMessageRef(row.locator).path);
+			if (!found || found === row.locator) throw error;
+			await refs.moved(new Map([[row.locator, found]]));
+			return fn(found);
+		}
+	}
+
+	async function shortRefOf(ref: string, accountId: string, messageId: string | null) {
+		return (await refs.shorten([{ ref, accountId, messageId }])).get(ref)!;
+	}
 
 	async function deliver(
 		draft: Draft,
@@ -177,7 +251,11 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 		};
 		if (how === 'draft') {
 			const ref = await saveDraft(userId, draft, options.replacesDraftRef);
-			return { status: 'draft_saved', draft_ref: ref, ...recipients };
+			return {
+				status: 'draft_saved',
+				draft_ref: await shortRefOf(ref, draft.accountId, null),
+				...recipients
+			};
 		}
 		const result = await sendDraft(userId, draft, options);
 		return { status: 'sent', message_id: result.messageId, ...recipients };
@@ -229,48 +307,213 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 		.default('inbox')
 		.describe('A role (inbox, drafts, sent, archive, spam, trash) or a folder path.');
 
+	/**
+	 * Sent messages of the conversations on a page, from the oldest listed message on: enough to
+	 * see whether the user answered last. Listing Sent itself needs none.
+	 */
+	async function sentMessages(
+		accounts: MailAccount[],
+		folder: string,
+		listed: MessageSummary[]
+	): Promise<{ messages: MessageSummary[]; errors: { accountId: string; message: string }[] }> {
+		const found: MessageSummary[] = [];
+		const errors: { accountId: string; message: string }[] = [];
+		await Promise.all(
+			accounts.map(async (account) => {
+				const own = listed.filter((m) => m.accountId === account.id);
+				if (!own.length) return;
+				const [path, sent] = await Promise.all([
+					resolveFolder(account, folder),
+					resolveFolder(account, 'sent')
+				]);
+				if (!sent || path === sent) return;
+				const oldest = Math.min(...own.map((m) => Date.parse(m.date) || 0));
+				const page = await listMessages(
+					[account],
+					sent,
+					{ since: new Date(oldest - DAY_MS) },
+					null,
+					SENT_LOOKUP_LIMIT,
+					{ notBefore: access.notBefore([account]), threads: true }
+				);
+				found.push(...page.messages);
+				errors.push(...page.errors.map((e) => ({ ...e, message: `Sent folder: ${e.message}` })));
+			})
+		);
+		return { messages: found, errors };
+	}
+
+	/** Previews by mail-layer ref; an account whose previews fail just has none. */
+	async function previewsOf(messages: MessageSummary[]): Promise<Map<string, string>> {
+		const byAccount = new Map<string, MessageSummary[]>();
+		for (const m of messages)
+			byAccount.set(m.accountId, [...(byAccount.get(m.accountId) ?? []), m]);
+		const maps = await Promise.all(
+			[...byAccount].map(([accountId, list]) =>
+				messagePreviews(accountsById.get(accountId)!, list).catch((error) => {
+					console.error('[mcp] previews failed', error);
+					return new Map<string, string>();
+				})
+			)
+		);
+		return new Map(maps.flatMap((map) => [...map]));
+	}
+
+	/** Recipients unless they are just the account itself. */
+	function recipientsOut(message: MessageSummary) {
+		const own = accountsById.get(message.accountId)?.email ?? '';
+		const onlyOwn = message.to.length === 1 && sameAddress(message.to[0].address, own);
+		return onlyOwn ? {} : { to: message.to.map(formatAddress) };
+	}
+
+	function conversationOut(
+		conversation: Conversation,
+		short: Map<string, string>,
+		previews: Map<string, string> | null,
+		multiAccount: boolean
+	) {
+		const last = conversation.messages.at(-1)!;
+		const newest = conversation.listed[0];
+		const own = accountsById.get(newest.accountId)?.email ?? '';
+		const people = new Map<string, string>();
+		for (const m of conversation.messages) {
+			for (const a of [...(m.from ? [m.from] : []), ...m.to]) {
+				const key = a.address.toLowerCase();
+				if (!sameAddress(a.address, own) && !people.has(key)) people.set(key, a.name || a.address);
+			}
+		}
+		const participants = [...people.values()];
+		const unread = conversation.listed.filter((m) => m.unread).length;
+		const preview = previews?.get(last.ref);
+		return {
+			subject: baseSubject(newest.subject),
+			...(multiAccount && { account: accountEmail(newest.accountId) }),
+			participants:
+				participants.length > MAX_PARTICIPANTS
+					? [
+							...participants.slice(0, MAX_PARTICIPANTS),
+							`+${participants.length - MAX_PARTICIPANTS} more`
+						]
+					: participants,
+			message_count: conversation.messages.length,
+			...(unread && { unread_count: unread }),
+			last_date: last.date,
+			last_from: addressText(last.from),
+			...(last.from && sameAddress(last.from.address, own) && { last_from_me: true }),
+			...(conversation.listed.some((m) => m.hasAttachments) && { has_attachments: true }),
+			message_refs: conversation.listed.map((m) => short.get(m.ref)!),
+			...(preview !== undefined && { preview })
+		};
+	}
+
 	async function listOrSearch(
 		account: string | undefined,
 		folder: string,
 		filters: MessageFilters,
-		limit: number,
-		cursor: string | undefined
+		options: {
+			limit: number;
+			cursor: string | undefined;
+			groupBy: 'message' | 'thread';
+			includePreview: boolean;
+		}
 	) {
 		const accounts = account ? [access.require(account, 'read')] : access.accounts('read');
 		if (!accounts.length)
 			throw new McpAccessError(
 				'This connection has no mail accounts. The user can grant some at Settings → Connected apps in the webmail.'
 			);
-		const page = await listMessages(accounts, folder, filters, cursor ?? null, limit, {
-			notBefore: access.notBefore(accounts)
-		});
+		const threads = options.groupBy === 'thread';
+		const page = await listMessages(
+			accounts,
+			folder,
+			filters,
+			options.cursor ?? null,
+			options.limit,
+			{
+				notBefore: access.notBefore(accounts),
+				threads
+			}
+		);
+		const errors = [...page.errors];
+		const multiAccount = accounts.length > 1;
+
+		let conversations: Conversation[] | null = null;
+		if (threads) {
+			const sent = await sentMessages(accounts, folder, page.messages);
+			errors.push(...sent.errors);
+			conversations = groupConversations(page.messages, sent.messages);
+		}
+		const previewed = conversations ? conversations.map((c) => c.messages.at(-1)!) : page.messages;
+		const previews = options.includePreview ? await previewsOf(previewed) : null;
+		const shown = conversations ? conversations.flatMap((c) => c.listed) : page.messages;
+		const short = await refs.shorten(shown);
+
+		const result = conversations
+			? { threads: conversations.map((c) => conversationOut(c, short, previews, multiAccount)) }
+			: {
+					messages: page.messages.map((m) => {
+						const preview = previews?.get(m.ref);
+						return {
+							message_ref: short.get(m.ref)!,
+							...(multiAccount && { account: accountEmail(m.accountId) }),
+							from: addressText(m.from),
+							...recipientsOut(m),
+							subject: m.subject,
+							date: m.date,
+							...flagsOut(m),
+							...(preview !== undefined && { preview })
+						};
+					})
+				};
 		return {
-			messages: page.messages.map((m) => summaryOut(m, accountsById)),
+			...result,
 			next_cursor: page.nextCursor,
-			errors: page.errors.map((e) => ({
-				account: accountsById.get(e.accountId)?.email ?? e.accountId,
-				error: e.message
-			}))
+			...(errors.length && {
+				errors: errors.map((e) => ({ account: accountEmail(e.accountId), error: e.message }))
+			})
 		};
 	}
+
+	const listOptions = {
+		group_by: groupBy,
+		include_preview: includePreview,
+		limit: z
+			.number()
+			.int()
+			.min(1)
+			.max(100)
+			.default(25)
+			.describe('Messages per page; with group_by "thread" they are grouped after paging.'),
+		cursor: z.string().optional().describe('next_cursor from the previous page.')
+	};
 
 	server.registerTool(
 		'list_messages',
 		{
 			title: 'List messages',
 			description:
-				'Lists messages in a folder, newest first. Omit account to list all granted accounts merged by date.',
+				'Lists messages in a folder, newest first, each with a preview of its new text. ' +
+				'Omit account to list all granted accounts merged by date. ' +
+				'With group_by "thread", returns one entry per conversation: participants, counts, the last ' +
+				'sender (last_from_me when the user answered last), the preview of the latest message, and the ' +
+				'message_refs of its messages in this folder.',
 			inputSchema: z.object({
 				account: accountRef.optional(),
 				folder: folderArg,
 				filter: z.enum(LIST_FILTERS).default('all'),
-				limit: z.number().int().min(1).max(100).default(25),
-				cursor: z.string().optional().describe('next_cursor from the previous page.')
+				...listOptions
 			}),
 			annotations: { readOnlyHint: true }
 		},
-		({ account, folder, filter, limit, cursor }) =>
-			guard(() => listOrSearch(account, folder, { filter }, limit, cursor))
+		({ account, folder, filter, limit, cursor, group_by, include_preview }) =>
+			guard(() =>
+				listOrSearch(
+					account,
+					folder,
+					{ filter },
+					{ limit, cursor, groupBy: group_by, includePreview: include_preview }
+				)
+			)
 	);
 
 	server.registerTool(
@@ -278,8 +521,8 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 		{
 			title: 'Search messages',
 			description:
-				'Searches one folder (default inbox; use "archive" for Gmail All Mail) by text and fields, newest first. ' +
-				'For Gmail, query accepts Gmail search syntax.',
+				'Searches one folder (default inbox; use "archive" for Gmail All Mail) by text and fields, newest first, ' +
+				'with the same output and group_by option as list_messages. For Gmail, query accepts Gmail search syntax.',
 			inputSchema: z.object({
 				query: z
 					.string()
@@ -295,12 +538,11 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 				starred: z.boolean().optional(),
 				account: accountRef.optional(),
 				folder: folderArg,
-				limit: z.number().int().min(1).max(100).default(25),
-				cursor: z.string().optional()
+				...listOptions
 			}),
 			annotations: { readOnlyHint: true }
 		},
-		({ account, folder, limit, cursor, since, before, ...filters }) =>
+		({ account, folder, limit, cursor, group_by, include_preview, since, before, ...filters }) =>
 			guard(() =>
 				listOrSearch(
 					account,
@@ -310,8 +552,7 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 						since: since ? new Date(since) : undefined,
 						before: before ? new Date(before) : undefined
 					},
-					limit,
-					cursor
+					{ limit, cursor, groupBy: group_by, includePreview: include_preview }
 				)
 			)
 	);
@@ -322,37 +563,54 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 			title: 'Read message',
 			description:
 				"Returns a message's headers, plain-text body, attachment list (unless the account withholds attachments), " +
-				'and calendar invitation if it carries one. Does not mark it as read.',
-			inputSchema: z.object({ message_ref: messageRef }),
+				'and calendar invitation if it carries one. Does not mark it as read. ' +
+				'Set include_quoted to false for only the new text of a reply.',
+			inputSchema: z.object({
+				message_ref: messageRef,
+				include_quoted: z
+					.boolean()
+					.default(true)
+					.describe(
+						'false returns only the text above the first quoted message (quoted_removed is then true when something was cut).'
+					)
+			}),
 			annotations: { readOnlyHint: true }
 		},
-		({ message_ref }) =>
+		({ message_ref, include_quoted }) =>
 			guard(async () => {
-				const { grant, locator, read } = await access.requireMessage(message_ref, 'read');
+				const { grant, locator, read } = await withMessage(message_ref, (ref) =>
+					access.requireMessage(ref, 'read')
+				);
 				const { detail } = read;
-				const truncated = detail.text.length > MAX_BODY_CHARS;
 				// File names can be sensitive too, so a grant without attachments hides the list.
 				const attachments = grant.allowAttachments
-					? {
-							attachments: detail.attachments.map((a) => ({
-								part_id: a.partId,
-								filename: a.filename,
-								content_type: a.contentType,
-								size: a.size
-							}))
-						}
+					? detail.attachments.length
+						? {
+								attachments: detail.attachments.map((a) => ({
+									part_id: a.partId,
+									filename: a.filename,
+									content_type: a.contentType,
+									size: a.size
+								}))
+							}
+						: {}
 					: { attachments_allowed: false };
 				return {
-					...summaryOut(detail, accountsById),
+					message_ref: await shortRefOf(detail.ref, detail.accountId, detail.messageId),
+					account: accountEmail(detail.accountId),
 					folder: locator.path,
-					cc: detail.cc.map(formatAddress),
-					reply_to: detail.replyTo.map(formatAddress),
+					from: addressText(detail.from),
+					to: detail.to.map(formatAddress),
+					...(detail.cc.length && { cc: detail.cc.map(formatAddress) }),
+					...(detail.replyTo.length && { reply_to: detail.replyTo.map(formatAddress) }),
+					subject: detail.subject,
+					date: detail.date,
+					...flagsOut(detail),
 					message_id: detail.messageId,
-					in_reply_to: detail.inReplyTo,
+					...(detail.inReplyTo && { in_reply_to: detail.inReplyTo }),
 					...attachments,
-					invitation: detail.invitation && invitationOut(detail.invitation),
-					body: truncated ? detail.text.slice(0, MAX_BODY_CHARS) : detail.text,
-					body_truncated: truncated
+					...(detail.invitation && { invitation: invitationOut(detail.invitation) }),
+					...bodyOut(read, include_quoted, MAX_BODY_CHARS)
 				};
 			})
 	);
@@ -362,16 +620,56 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 		{
 			title: 'Get conversation',
 			description:
-				'Lists the other messages of the conversation a message belongs to (received and sent), oldest first. ' +
-				"Messages outside the account's time window are left out.",
-			inputSchema: z.object({ message_ref: messageRef }),
+				'Returns the whole conversation a message belongs to (received and sent, all folders), oldest first, ' +
+				"each message with its body. By default each body is only that message's new text, since the earlier " +
+				"messages are listed too. Messages outside the account's time window are left out; long conversations " +
+				'return the newest 30.',
+			inputSchema: z.object({
+				message_ref: messageRef,
+				include_quoted: z
+					.boolean()
+					.default(false)
+					.describe('true returns each full body including the quoted earlier messages.')
+			}),
 			annotations: { readOnlyHint: true }
 		},
-		({ message_ref }) =>
+		({ message_ref, include_quoted }) =>
 			guard(async () => {
-				const { account, locator, read } = await access.requireMessage(message_ref, 'read');
-				const thread = await getThread(account, locator, read.detail);
-				return access.visible(thread).map((m) => summaryOut(m, accountsById));
+				const { account, locator, read } = await withMessage(message_ref, (ref) =>
+					access.requireMessage(ref, 'read')
+				);
+				const found = access.visible(await getThread(account, locator, read.detail));
+				const thread = found.length ? found : [read.detail];
+				const shown = thread.slice(-MAX_THREAD_MESSAGES);
+				const reads = await Promise.allSettled(
+					shown.map((m) => getMessage(account, decodeMessageRef(m.ref)))
+				);
+				const short = await refs.shorten(shown);
+				const own = account.email;
+				return {
+					subject: baseSubject(read.detail.subject),
+					...(thread.length > shown.length && {
+						earlier_messages_omitted: thread.length - shown.length
+					}),
+					messages: shown.flatMap((m, index) => {
+						const result = reads[index];
+						if (result.status === 'rejected') return [];
+						const { detail } = result.value;
+						return [
+							{
+								message_ref: short.get(m.ref)!,
+								folder: decodeMessageRef(m.ref).path,
+								from: addressText(detail.from),
+								...(detail.from && sameAddress(detail.from.address, own) && { from_me: true }),
+								to: detail.to.map(formatAddress),
+								...(detail.cc.length && { cc: detail.cc.map(formatAddress) }),
+								date: detail.date,
+								...flagsOut(m),
+								...bodyOut(result.value, include_quoted, MAX_THREAD_BODY_CHARS)
+							}
+						];
+					})
+				};
 			})
 	);
 
@@ -386,10 +684,12 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 		},
 		({ message_ref, part_id }) =>
 			guard(async (): Promise<CallToolResult> => {
-				const { account, locator } = await access.requireMessage(message_ref, 'read', {
-					attachments: true
+				const file = await withMessage(message_ref, async (ref) => {
+					const { account, locator } = await access.requireMessage(ref, 'read', {
+						attachments: true
+					});
+					return getAttachment(account, locator, part_id);
 				});
-				const file = await getAttachment(account, locator, part_id);
 				if (file.content.length > MAX_ATTACHMENT_BYTES) {
 					return failure(`${file.filename} is larger than 10 MB and cannot be returned.`);
 				}
@@ -422,7 +722,8 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 		{
 			title: 'Update messages',
 			description:
-				'Marks messages read/unread or starred/unstarred, or moves them to archive, trash, spam, inbox, or a folder.',
+				'Marks messages read/unread or starred/unstarred, or moves them to archive, trash, spam, inbox, or a folder. ' +
+				'Their message_refs stay valid after moving.',
 			inputSchema: z.object({
 				message_refs: z.array(messageRef).min(1).max(200),
 				action: z.enum([
@@ -442,8 +743,9 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 		},
 		({ message_refs, action, folder }) =>
 			guard(async () => {
-				await access.requireMessages(message_refs, 'organize');
-				const groups = await groupRefs(userId, message_refs);
+				const locators = (await refs.resolveAll(message_refs)).map((row) => row.locator);
+				await access.requireMessages(locators, 'organize');
+				const groups = await groupRefs(userId, locators);
 				switch (action) {
 					case 'mark_read':
 					case 'mark_unread':
@@ -455,13 +757,13 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 						break;
 					case 'move':
 						if (!folder) throw new MailError('"folder" is required for move.', 400);
-						await moveMessages(groups, { path: folder });
+						await refs.moved(await moveMessages(groups, { path: folder }));
 						break;
 					case 'move_to_inbox':
-						await moveMessages(groups, 'inbox');
+						await refs.moved(await moveMessages(groups, 'inbox'));
 						break;
 					default:
-						await moveMessages(groups, action);
+						await refs.moved(await moveMessages(groups, action));
 				}
 				return { status: 'ok', updated: message_refs.length };
 			})
@@ -490,17 +792,19 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 			})
 		},
 		({ message_ref, body, reply_all, extra_cc, attachments, mode: how }) =>
-			guard(async () => {
-				await access.requireMessage(message_ref, how === 'send' ? 'send' : 'organize');
-				const prepared = await prepareReply(userId, message_ref, reply_all);
-				const draft: Draft = {
-					...prepared.draft,
-					cc: [...prepared.draft.cc, ...parseAddressList(extra_cc ?? [])],
-					html: withBody(body, prepared.suffix),
-					attachments: attachmentsFrom(attachments)
-				};
-				return deliver(draft, how, { answersRef: message_ref });
-			})
+			guard(() =>
+				withMessage(message_ref, async (ref) => {
+					await access.requireMessage(ref, how === 'send' ? 'send' : 'organize');
+					const prepared = await prepareReply(userId, ref, reply_all);
+					const draft: Draft = {
+						...prepared.draft,
+						cc: [...prepared.draft.cc, ...parseAddressList(extra_cc ?? [])],
+						html: withBody(body, prepared.suffix),
+						attachments: attachmentsFrom(attachments)
+					};
+					return deliver(draft, how, { answersRef: ref });
+				})
+			)
 	);
 
 	server.registerTool(
@@ -520,20 +824,22 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 			})
 		},
 		({ message_ref, to, cc, body, include_attachments, mode: how }) =>
-			guard(async () => {
-				await access.requireMessage(message_ref, how === 'send' ? 'send' : 'organize', {
-					attachments: include_attachments,
-					attachmentsHint: 'Forward with include_attachments set to false instead.'
-				});
-				const prepared = await prepareForward(userId, message_ref, include_attachments);
-				const draft: Draft = {
-					...prepared.draft,
-					to: parseAddressList(to),
-					cc: parseAddressList(cc ?? []),
-					html: withBody(body, prepared.suffix)
-				};
-				return deliver(draft, how);
-			})
+			guard(() =>
+				withMessage(message_ref, async (ref) => {
+					await access.requireMessage(ref, how === 'send' ? 'send' : 'organize', {
+						attachments: include_attachments,
+						attachmentsHint: 'Forward with include_attachments set to false instead.'
+					});
+					const prepared = await prepareForward(userId, ref, include_attachments);
+					const draft: Draft = {
+						...prepared.draft,
+						to: parseAddressList(to),
+						cc: parseAddressList(cc ?? []),
+						html: withBody(body, prepared.suffix)
+					};
+					return deliver(draft, how);
+				})
+			)
 	);
 
 	server.registerTool(
@@ -597,8 +903,10 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 		},
 		({ message_ref, response }) =>
 			guard(async () => {
-				await access.requireMessage(message_ref, 'send');
-				const result = await respondToInvitation(userId, message_ref, response);
+				const result = await withMessage(message_ref, async (ref) => {
+					await access.requireMessage(ref, 'send');
+					return respondToInvitation(userId, ref, response);
+				});
 				return {
 					status: 'sent',
 					response,
@@ -619,14 +927,16 @@ export function createMcpServer(userId: string, access: McpAccess): McpServer {
 			})
 		},
 		({ draft_ref }) =>
-			guard(async () => {
-				const { account, locator } = await access.requireMessage(draft_ref, 'send');
-				if (locator.path !== (await resolveFolder(account, 'drafts'))) {
-					throw new MailError('That message is not in the Drafts folder.', 400);
-				}
-				const draft = await loadDraft(userId, draft_ref);
-				return deliver(draft, 'send', { replacesDraftRef: draft_ref });
-			})
+			guard(() =>
+				withMessage(draft_ref, async (ref) => {
+					const { account, locator } = await access.requireMessage(ref, 'send');
+					if (locator.path !== (await resolveFolder(account, 'drafts'))) {
+						throw new MailError('That message is not in the Drafts folder.', 400);
+					}
+					const draft = await loadDraft(userId, ref);
+					return deliver(draft, 'send', { replacesDraftRef: ref });
+				})
+			)
 	);
 
 	return server;

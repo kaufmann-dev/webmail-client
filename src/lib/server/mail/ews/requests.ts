@@ -27,9 +27,14 @@ export const DETAIL_FIELDS = [
 	'item:DateTimeSent',
 	'item:ItemClass',
 	'item:Attachments',
-	'item:Body',
-	'item:TextBody'
+	'item:Body'
 ];
+
+/** Summary fields plus the conversation a message belongs to. */
+export const THREAD_FIELDS = [...SUMMARY_FIELDS, 'item:ConversationId'];
+
+/** Exchange's preview: the start of the body as one line of text (Exchange 2013 and later). */
+export const PREVIEW_FIELDS = ['item:Preview'];
 
 /** PidTagFlagStatus: 2 means flagged for follow-up. */
 const FLAG_STATUS = '<t:ExtendedFieldURI PropertyTag="0x1090" PropertyType="Integer"/>';
@@ -148,6 +153,16 @@ export function queryString(filters: MessageFilters): string | null {
 	if (filters.since) parts.push(`received:>=${day(filters.since)}`);
 	if (filters.before) parts.push(`received:<${day(filters.before)}`);
 	return parts.join(' ');
+}
+
+/** The items in a folder with a Message-ID header, IDs only. */
+export function findByMessageId(folder: string, messageId: string): string {
+	return (
+		'<m:FindItem Traversal="Shallow"><m:ItemShape><t:BaseShape>IdOnly</t:BaseShape></m:ItemShape>' +
+		'<m:IndexedPageItemView MaxEntriesReturned="1" Offset="0" BasePoint="Beginning"/>' +
+		`<m:Restriction>${compare('IsEqualTo', '<t:FieldURI FieldURI="message:InternetMessageId"/>', messageId)}</m:Restriction>` +
+		`<m:ParentFolderIds>${folderId(folder)}</m:ParentFolderIds></m:FindItem>`
+	);
 }
 
 /** One page of a folder, newest first, IDs only. */

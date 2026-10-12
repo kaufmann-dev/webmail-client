@@ -1,5 +1,6 @@
 import { simpleParser } from 'mailparser';
 import type { Address, MessageDetail, MessageSummary } from '../../../mail-types';
+import { bodyText, previewOfCollapsed } from '../body-text';
 import { MailError } from '../errors';
 import { findCalendarPart, parseInvitation } from '../invitations';
 import type { AccountPage } from '../merge';
@@ -71,7 +72,8 @@ export async function listPage(
 	path: string,
 	filters: MessageFilters,
 	cursor: number | undefined,
-	limit: number
+	limit: number,
+	options: { threads?: boolean } = {}
 ): Promise<AccountPage> {
 	const offset = cursor ?? 0;
 	const folder = await folderIdOf(account, path);
@@ -87,7 +89,8 @@ export async function listPage(
 		.map((entry) => entry.id);
 	const exhausted = attr(root, 'IncludesLastItemInRange') !== 'false';
 	if (!ids.length) return { accountId: account.id, items: [], exhausted: true };
-	const messages = await ewsCall(account, request.getItems(ids, request.SUMMARY_FIELDS));
+	const fields = options.threads ? request.THREAD_FIELDS : request.SUMMARY_FIELDS;
+	const messages = await ewsCall(account, request.getItems(ids, fields));
 	const items = messages.flatMap((message, index) => {
 		const item = failed(message) ? null : firstItem(message);
 		return item ? [summaryOf(account.id, path, item.node, offset + index + 1)] : [];
@@ -174,11 +177,19 @@ export async function readMessage(account: MailAccount, locator: EwsLocator): Pr
 	const summary = summaryOf(account.id, locator.path, node, 0);
 	const attachments = attachmentsOf(node);
 	const body = text(node.Body);
+	// The text comes from the HTML body (Exchange's own TextBody leaves entities and `[cid:…]`).
+	const plain = bodyText({
+		html: body || null,
+		text: '',
+		subject: summary.subject,
+		images: new Map(
+			attachments.flatMap((a) => (a.contentId && a.name ? [[a.contentId, a.name] as const] : []))
+		)
+	});
 	const { html, embedded } = body
 		? await embedImages(account, body, attachments)
 		: { html: '', embedded: new Set<string>() };
 	const sanitized = html ? sanitizeEmailHtml(html) : null;
-	const plain = text(node.TextBody);
 	const calendar = text(node.ItemClass).startsWith('IPM.Schedule.Meeting')
 		? await meetingCalendar(account, locator.itemId).catch(() => null)
 		: null;
@@ -189,8 +200,8 @@ export async function readMessage(account: MailAccount, locator: EwsLocator): Pr
 		replyTo: mailboxes(child(node, 'ReplyTo')),
 		inReplyTo: text(node.InReplyTo) || null,
 		references: text(node.References).split(/\s+/).filter(Boolean),
-		text: plain,
-		html: sanitized?.html ?? textToHtml(plain),
+		text: plain.text,
+		html: sanitized?.html ?? textToHtml(plain.text),
 		hasRemoteImages: sanitized?.hasRemoteImages ?? false,
 		attachments: attachments
 			.filter((a) => !embedded.has(a.id))
@@ -209,7 +220,12 @@ export async function readMessage(account: MailAccount, locator: EwsLocator): Pr
 		...detail.bcc,
 		...detail.replyTo
 	]);
-	return { detail, sentAt: dateOrNull(text(node.DateTimeSent)), calendar };
+	return {
+		detail,
+		newText: plain.newText,
+		sentAt: dateOrNull(text(node.DateTimeSent)),
+		calendar
+	};
 }
 
 /** Downloads attachments by part ID, in the given order. */
@@ -281,9 +297,47 @@ export function markAnswered(account: MailAccount, ids: string[]): Promise<void>
 	]);
 }
 
-export async function moveItems(account: MailAccount, ids: string[], path: string): Promise<void> {
+/** Moves items and returns their new IDs (Exchange IDs change with the folder), in order. */
+export async function moveItems(
+	account: MailAccount,
+	ids: string[],
+	path: string
+): Promise<(string | null)[]> {
 	const messages = await ewsCall(account, request.moveItems(ids, await folderIdOf(account, path)));
-	for (const message of messages) check(message);
+	return messages.map((message) => {
+		const item = firstItem(check(message));
+		return item ? itemId(item.node) || null : null;
+	});
+}
+
+/** One-line previews without quotes, in the given order; null for items that are gone. */
+export async function previews(
+	account: MailAccount,
+	items: { itemId: string; subject: string }[]
+): Promise<(string | null)[]> {
+	const messages = await ewsCall(
+		account,
+		request.getItems(
+			items.map((i) => i.itemId),
+			request.PREVIEW_FIELDS
+		)
+	);
+	return messages.map((message, index) => {
+		const item = failed(message) ? null : firstItem(message);
+		return item ? previewOfCollapsed(text(item.node.Preview), items[index].subject) : null;
+	});
+}
+
+/** The item with a Message-ID header in a folder, or null. */
+export async function findByMessageId(
+	account: MailAccount,
+	path: string,
+	messageId: string
+): Promise<string | null> {
+	const folder = await folderIdOf(account, path);
+	const [found] = await ewsCall(account, request.findByMessageId(folder, messageId));
+	const [item] = itemsOf(child(child(check(found), 'RootFolder'), 'Items'));
+	return item ? itemId(item.node) || null : null;
 }
 
 export async function deleteItems(account: MailAccount, ids: string[]): Promise<void> {

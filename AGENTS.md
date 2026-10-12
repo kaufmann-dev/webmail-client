@@ -51,6 +51,13 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
   - `compose.ts`: drafts and sending. Outgoing mail is HTML (`html-body.ts`: the document around
     the editor HTML, in the account's font from `MAIL_FONTS` in `src/lib/html.ts` or none, and its
     `html-to-text` plain-text alternative); `data:` images go out as embedded parts.
+  - `body-text.ts`: bodies as plain text for AI clients (`ReadMessage.detail.text`) from the HTML
+    when there is one: decoded entities, Markdown data tables, `[image: name]`, and the new text
+    without quoted messages (`ReadMessage.newText`, by quote containers first, then text patterns;
+    forwards keep everything), plus list previews. `messagePreviews` reads only the start of the
+    IMAP text part, or Exchange's `item:Preview`.
+  - `conversations.ts`: groups a listed page by conversation (provider conversation ID, else
+    Message-ID / In-Reply-To / References), with Sent messages joining for `last_from_me`.
   - `threading.ts`: pure reply and forward header logic, the HTML quote and forward block, and
     `composeBody` (text, `wm-signature` block, `wm-quote` block).
   - `invitations.ts`: pure calendar invitation parsing and iMIP replies (ical.js);
@@ -61,8 +68,10 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
 - Messages are addressed by opaque refs from `message-ref.ts`: account, path, UIDVALIDITY, and UID
   over IMAP; account, folder path, and EWS item ID on Exchange. Resolve them with `resolveRef` /
   `groupRefs`, which scope accounts to the user; `imapLocator` / `ewsLocator` reject a ref of the
-  wrong kind.
-- Mail is never stored in the database. Credentials are AES-GCM encrypted with `CREDENTIALS_KEY`
+  wrong kind. MCP clients never see these refs: `mcp/refs.ts` maps them to 10-character refs in
+  `mcp_message_ref`. `moveMessages` returns the new refs of moved messages so short refs follow
+  them, and `withMessage` in `tools.ts` finds a message moved elsewhere by its Message-ID.
+- Mail is never stored in the database (`mcp_message_ref` holds identifiers only). Credentials are AES-GCM encrypted with `CREDENTIALS_KEY`
   (`crypto.ts`, `credentials.ts`); never return `MailAccount.secret` to the browser (use
   `toSummary`).
 - Throw `MailError` for messages that are safe to show users and AI clients.
@@ -93,6 +102,8 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
   - Lists pass `access.notBefore(accounts)` to `listMessages`, and threads pass through
     `access.visible`.
   - Without attachments, `get_message` leaves out the attachment list (file names included).
+- Tool results are compact JSON that leave out defaults: boolean flags only when true, `account`
+  only when results span several accounts, `to` in lists only when it is not just the account.
 - Sending tools default to `mode: 'draft'`, except `respond_to_invitation`, which always sends (a
   saved draft would lose its calendar part).
 

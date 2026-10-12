@@ -79,7 +79,16 @@ export function summaryOf(
 		starred: text(child(node, 'Flag')?.FlagStatus) === 'Flagged',
 		draft: text(node.IsDraft) === 'true',
 		hasAttachments: text(node.HasAttachments) === 'true',
-		messageId: text(node.InternetMessageId) || null
+		messageId: text(node.InternetMessageId) || null,
+		...('ConversationId' in node
+			? {
+					thread: {
+						id: attr(child(node, 'ConversationId'), 'Id') || null,
+						inReplyTo: null,
+						references: []
+					}
+				}
+			: {})
 	};
 }
 
