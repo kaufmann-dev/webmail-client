@@ -70,7 +70,9 @@
 	let linkOpen = $state(false);
 	let linkUrl = $state('');
 	let imageInput = $state<HTMLInputElement | null>(null);
-	let colorInput = $state<HTMLInputElement | null>(null);
+	let colorOpen = $state(false);
+	let customColor = $state('#C00000');
+	const validColor = $derived(/^#[0-9a-f]{6}$/i.test(customColor.trim()));
 	const hasRemote = $derived(REMOTE_RESOURCE.test(html));
 
 	let frame: HTMLIFrameElement | null = null;
@@ -320,6 +322,13 @@ a{color:#1a56c4}`;
 		}
 	}
 
+	function applyColor(event: SubmitEvent) {
+		event.preventDefault();
+		if (!validColor) return;
+		colorOpen = false;
+		run('foreColor', customColor.trim());
+	}
+
 	async function chooseImages(event: Event) {
 		const input = event.currentTarget as HTMLInputElement;
 		const files = [...(input.files ?? [])];
@@ -378,7 +387,7 @@ a{color:#1a56c4}`;
 					</DropdownMenu.Item>
 				{/each}
 				<DropdownMenu.Separator />
-				<DropdownMenu.Item onSelect={() => colorInput?.click()}>Custom…</DropdownMenu.Item>
+				<DropdownMenu.Item onSelect={() => (colorOpen = true)}>Custom…</DropdownMenu.Item>
 			</DropdownMenu.Content>
 		</DropdownMenu.Root>
 		<span class="mx-1 h-5 w-px bg-border" aria-hidden="true"></span>
@@ -448,13 +457,30 @@ a{color:#1a56c4}`;
 	tabindex="-1"
 	onchange={chooseImages}
 />
-<input
-	bind:this={colorInput}
-	type="color"
-	class="sr-only"
-	tabindex="-1"
-	onchange={(event) => run('foreColor', event.currentTarget.value)}
-/>
+
+<Dialog.Root bind:open={colorOpen}>
+	<Dialog.Content class="sm:max-w-sm" onCloseAutoFocus={(event) => event.preventDefault()}>
+		<Dialog.Header>
+			<Dialog.Title>Text color</Dialog.Title>
+		</Dialog.Header>
+		<form class="flex flex-col gap-4" onsubmit={applyColor}>
+			<div class="flex items-center gap-2">
+				<input
+					type="color"
+					value={validColor ? customColor.trim() : '#000000'}
+					oninput={(event) => (customColor = event.currentTarget.value.toUpperCase())}
+					class="h-8 w-10 shrink-0 cursor-pointer rounded-md border bg-background p-0.5"
+					aria-label="Pick a color"
+				/>
+				<Input bind:value={customColor} placeholder="#C00000" aria-label="Hex color" />
+			</div>
+			<Dialog.Footer>
+				<Button type="button" variant="outline" onclick={() => (colorOpen = false)}>Cancel</Button>
+				<Button type="submit" disabled={!validColor}>Apply</Button>
+			</Dialog.Footer>
+		</form>
+	</Dialog.Content>
+</Dialog.Root>
 
 <Dialog.Root bind:open={linkOpen}>
 	<Dialog.Content class="sm:max-w-md" onCloseAutoFocus={(event) => event.preventDefault()}>
