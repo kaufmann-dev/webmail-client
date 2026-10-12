@@ -81,19 +81,32 @@ describe('referencesOf', () => {
 });
 
 describe('conversationCriteria', () => {
-	it('finds ancestors by Message-ID and replies by References or only In-Reply-To', () => {
+	it('searches every known ID and the replies to each, so siblings are found too', () => {
 		const criteria = conversationCriteria([
-			{ messageId: '<b@x>', inReplyTo: '<a@x>', references: ['<a@x>'] },
-			{ messageId: '<c@x>', inReplyTo: null, references: [] }
+			{ messageId: '<b@x>', inReplyTo: '<a@x>', references: ['<a@x>'] }
 		]);
 		expect(criteria).toEqual([
 			{ header: { 'message-id': '<a@x>' } },
+			{ header: { references: '<a@x>' } },
+			{ header: { 'in-reply-to': '<a@x>' } },
 			{ header: { 'message-id': '<b@x>' } },
 			{ header: { references: '<b@x>' } },
-			{ header: { 'in-reply-to': '<b@x>' } },
-			{ header: { 'message-id': '<c@x>' } },
-			{ header: { references: '<c@x>' } },
-			{ header: { 'in-reply-to': '<c@x>' } }
+			{ header: { 'in-reply-to': '<b@x>' } }
 		]);
+	});
+
+	it('groups an automatic reply with the answer to the same message, as getThread finds them', () => {
+		const autoReply = message('r1', '2026-10-12T08:00:00Z', { inReplyTo: '<sent@example.com>' });
+		const answer = message('r2', '2026-10-12T10:00:00Z', {
+			inReplyTo: '<sent@example.com>',
+			references: ['<sent@example.com>']
+		});
+		const [group] = groupConversations([answer, autoReply]);
+		expect(group.listed.map((m) => m.ref)).toEqual(['r2', 'r1']);
+		expect(
+			conversationCriteria([answer.thread!].map((t) => ({ ...t, messageId: answer.messageId })))
+		).toContainEqual({
+			header: { 'in-reply-to': '<sent@example.com>' }
+		});
 	});
 });

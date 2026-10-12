@@ -111,6 +111,13 @@ describe('bodyText', () => {
 		);
 	});
 
+	it('decodes entities that the sender encoded twice', () => {
+		const html = '<blockquote>Von MUSTER Max &amp;lt;max@example.org&amp;gt;:</blockquote>';
+		expect(bodyText({ html, text: '', subject: '' }).text).toBe(
+			'> Von MUSTER Max <max@example.org>:'
+		);
+	});
+
 	it('names embedded images by their Content-ID without a file name', () => {
 		const body = bodyText({
 			html: '<p><img src="cid:image001.jpg@01DD0000.1"></p>',

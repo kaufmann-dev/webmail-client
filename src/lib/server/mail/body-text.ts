@@ -1,4 +1,4 @@
-import { decodeHTML } from 'entities';
+import { decodeHTMLStrict } from 'entities';
 import { compile, type DomNode, type FormatCallback } from 'html-to-text';
 import type { BlockTextBuilder, TablePrinterCell } from 'html-to-text/lib/block-text-builder';
 
@@ -199,9 +199,16 @@ export function normalizeText(text: string): string {
 		.trim();
 }
 
-/** HTML as plain text; quoted messages are marked with `QUOTE_MARK`. */
+/**
+ * HTML as plain text; quoted messages are marked with `QUOTE_MARK`. Entities left after the
+ * conversion come from senders that encode twice (some ticket systems quote `&lt;` as
+ * `&amp;lt;`); they are decoded too, so the text reads as meant and matches previews.
+ */
 function htmlText(html: string, images: Map<string, string>): string {
-	return convertHtml(html, { images }).replace(/([^\s[\]]+@[^\s[\]]+) \[mailto:\1\]/g, '$1');
+	return decodeHTMLStrict(convertHtml(html, { images })).replace(
+		/([^\s[\]]+@[^\s[\]]+) \[mailto:\1\]/g,
+		'$1'
+	);
 }
 
 const SEPARATOR = String.raw`-{2,}\s*(?:Original Message|Ursprüngliche Nachricht|Originalnachricht|Original-Nachricht|Message d'origine|Messaggio originale|Mensaje original)\s*-{2,}`;
@@ -354,7 +361,7 @@ function cutQuoteIndex(text: string): number {
  * cut after 255 characters. Quote headers are recognized whole, or near the cut by their start.
  */
 export function previewOfCollapsed(text: string, subject: string): string {
-	const clean = normalizeText(decodeHTML(text));
+	const clean = normalizeText(decodeHTMLStrict(text));
 	if (isForwardSubject(subject)) return previewLine(clean);
 	let index = quoteIndex(clean, { collapsed: true });
 	if (index < 0) index = cutQuoteIndex(clean);

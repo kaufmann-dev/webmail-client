@@ -816,8 +816,9 @@ async function searchFolders(
 
 /**
  * Header searches for the conversations of these messages (servers without conversation IDs):
- * the messages they refer to, and the replies that refer to them by References or only by
- * In-Reply-To (as automatic replies often do).
+ * each message and every message it refers to, and the replies to any of them by References or
+ * only by In-Reply-To (as automatic replies often do). Replies to an ancestor bring in siblings,
+ * such as an automatic reply and the answer that followed it.
  */
 export function conversationCriteria(
 	messages: { messageId: string | null; inReplyTo: string | null; references: string[] }[]
@@ -827,10 +828,11 @@ export function conversationCriteria(
 		criteria.set(`${name} ${value}`, { header: { [name]: value } });
 	for (const message of messages) {
 		const ids = [...message.references.slice(-20), message.inReplyTo, message.messageId];
-		for (const id of ids) if (id) add('message-id', id);
-		if (message.messageId) {
-			add('references', message.messageId);
-			add('in-reply-to', message.messageId);
+		for (const id of ids) {
+			if (!id) continue;
+			add('message-id', id);
+			add('references', id);
+			add('in-reply-to', id);
 		}
 	}
 	return [...criteria.values()];
