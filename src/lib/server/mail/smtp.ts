@@ -1,9 +1,8 @@
 import nodemailer from 'nodemailer';
 import type { MailAuth } from './credentials';
-import { PROVIDER_CONFIG } from './providers';
-import type { Provider } from '../../mail-types';
+import { PROVIDER_CONFIG, type ImapProvider } from './providers';
 
-export function createSmtpTransport(provider: Provider, auth: MailAuth) {
+export function createSmtpTransport(provider: ImapProvider, auth: MailAuth) {
 	const { host, port, secure } = PROVIDER_CONFIG[provider].smtp;
 	return nodemailer.createTransport({
 		host,

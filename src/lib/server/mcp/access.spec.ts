@@ -31,8 +31,14 @@ describe('McpAccess', () => {
 
 	it('filters accounts by level and checks message refs', () => {
 		expect(access.accounts('send').map((a) => a.id)).toEqual(['b']);
-		const ref = encodeMessageRef({ accountId: 'a', path: 'INBOX', uidValidity: '1', uid: 3 });
-		expect(access.requireRef(ref, 'read').locator.uid).toBe(3);
+		const ref = encodeMessageRef({
+			kind: 'imap',
+			accountId: 'a',
+			path: 'INBOX',
+			uidValidity: '1',
+			uid: 3
+		});
+		expect(access.requireRef(ref, 'read').locator).toMatchObject({ kind: 'imap', uid: 3 });
 		expect(() => access.requireRef(ref, 'organize')).toThrow(McpAccessError);
 	});
 });

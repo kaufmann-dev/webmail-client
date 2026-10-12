@@ -9,8 +9,11 @@ import {
 } from '../../mail-types';
 import { cacheAccessToken, forgetAccessToken, sealSecret, type MailAuth } from './credentials';
 import { errorMessage, MailAuthError, MailError } from './errors';
+import * as ews from './ews/client';
+import { forgetResolvedAddresses } from './ews/messages';
 import { invalidateFolders } from './folders';
 import { createImapClient, dropClient } from './imap';
+import type { ImapProvider } from './providers';
 import { createSmtpTransport } from './smtp';
 import type { MailAccount } from './types';
 
@@ -45,7 +48,7 @@ export async function getAccount(userId: string, accountId: string): Promise<Mai
 }
 
 /** Logs in over IMAP and verifies SMTP, so broken credentials are never saved. */
-export async function testConnection(provider: Provider, auth: MailAuth): Promise<void> {
+async function testImapConnection(provider: ImapProvider, auth: MailAuth): Promise<void> {
 	const imap = createImapClient(provider, auth);
 	try {
 		await imap.connect();
@@ -71,6 +74,27 @@ export async function testConnection(provider: Provider, auth: MailAuth): Promis
 	}
 }
 
+/** Exchange only: where and as whom to sign in. */
+export interface ExchangeSettings {
+	server: string;
+	username: string | null;
+}
+
+/** Signs in with the given credentials (Exchange Web Services for Exchange, else IMAP and SMTP). */
+export async function testConnection(
+	provider: Provider,
+	auth: MailAuth,
+	exchange?: ExchangeSettings
+): Promise<void> {
+	if (provider !== 'exchange') return testImapConnection(provider, auth);
+	if (!exchange || !('pass' in auth)) throw new MailError('Enter the Exchange server.', 400);
+	await ews.testConnection({
+		server: exchange.server,
+		user: exchange.username ?? auth.user,
+		pass: auth.pass
+	});
+}
+
 async function nextPlacement(userId: string): Promise<{ sortOrder: number; color: AccountColor }> {
 	const existing = await listAccounts(userId);
 	const used = new Set(existing.map((a) => a.color));
@@ -87,10 +111,13 @@ export async function createPasswordAccount(
 		email: string;
 		password: string;
 		displayName: string;
+		/** Required for Exchange. */
+		exchange?: ExchangeSettings;
 	}
 ): Promise<MailAccount> {
 	const email = input.email.trim();
-	await testConnection(input.provider, { user: email, pass: input.password });
+	const exchange = input.provider === 'exchange' ? input.exchange : undefined;
+	await testConnection(input.provider, { user: email, pass: input.password }, exchange);
 	const placement = await nextPlacement(userId);
 	try {
 		const [account] = await db
@@ -102,6 +129,8 @@ export async function createPasswordAccount(
 				displayName: input.displayName.trim() || email,
 				label: email,
 				secret: sealSecret(input.password),
+				server: exchange?.server ?? null,
+				username: exchange?.username ?? null,
 				...placement
 			})
 			.returning();
@@ -178,7 +207,11 @@ export async function updateAccount(
 		if (account.provider === 'microsoft') {
 			throw new MailError('Microsoft accounts reconnect through Microsoft sign-in.', 400);
 		}
-		await testConnection(account.provider, { user: account.email, pass: input.password });
+		await testConnection(
+			account.provider,
+			{ user: account.email, pass: input.password },
+			account.server ? { server: account.server, username: account.username } : undefined
+		);
 		changes.secret = sealSecret(input.password);
 		changes.lastError = null;
 	}
@@ -192,6 +225,7 @@ export async function deleteAccount(userId: string, accountId: string): Promise<
 	dropClient(account.id);
 	forgetAccessToken(account.id);
 	invalidateFolders(account.id);
+	forgetResolvedAddresses(account.id);
 }
 
 /** Swaps an account with its neighbour in the sidebar order. */

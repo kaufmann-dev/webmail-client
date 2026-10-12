@@ -1,12 +1,13 @@
 /** Types and constants shared by the server mail layer and the UI. */
 
-export const PROVIDERS = ['gmail', 'purelymail', 'microsoft'] as const;
+export const PROVIDERS = ['gmail', 'purelymail', 'microsoft', 'exchange'] as const;
 export type Provider = (typeof PROVIDERS)[number];
 
 export const PROVIDER_LABELS: Record<Provider, string> = {
 	gmail: 'Gmail',
 	purelymail: 'Purelymail',
-	microsoft: 'Microsoft 365'
+	microsoft: 'Microsoft 365',
+	exchange: 'Exchange'
 };
 
 export const ACCOUNT_COLORS = [
@@ -76,7 +77,11 @@ export interface AccountSummary {
 export interface MessageSummary {
 	ref: string;
 	accountId: string;
-	uid: number;
+	/**
+	 * The account's list cursor after this message: its UID over IMAP, or its 1-based position in
+	 * the folder on Exchange.
+	 */
+	cursor: number;
 	from: Address | null;
 	to: Address[];
 	subject: string;

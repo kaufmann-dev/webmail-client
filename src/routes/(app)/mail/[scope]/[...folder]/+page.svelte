@@ -190,7 +190,9 @@
 			const next: MessagePage = await response.json();
 			// A fresh list arrived meanwhile and starts over from the newest messages.
 			if (list !== base) return;
-			loaded = [...loaded, ...next.messages];
+			// Exchange pages by position, so mail that arrived meanwhile can repeat the last row.
+			const shown = new Set(loaded.map((m) => m.ref));
+			loaded = [...loaded, ...next.messages.filter((m) => !shown.has(m.ref))];
 			cursor = next.nextCursor;
 			for (const failure of next.errors) toast.error(failure.message);
 		} catch {

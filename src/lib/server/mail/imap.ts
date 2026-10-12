@@ -1,12 +1,9 @@
 import { ImapFlow, type MailboxObject } from 'imapflow';
-import { eq } from 'drizzle-orm';
-import { db } from '../db';
-import { mailAccount } from '../db/schema';
+import { clearAccountError, recordAccountError } from './account-status';
 import { mailAuth, type MailAuth } from './credentials';
 import { errorMessage, MailAuthError, MailError } from './errors';
-import { PROVIDER_CONFIG } from './providers';
+import { PROVIDER_CONFIG, type ImapProvider } from './providers';
 import type { MailAccount } from './types';
-import type { Provider } from '../../mail-types';
 
 const IDLE_CLOSE_MS = 5 * 60_000;
 
@@ -19,7 +16,7 @@ interface PoolEntry {
 /** One live IMAP connection per account, reused across requests and closed after idling. */
 const pool = new Map<string, PoolEntry>();
 
-export function createImapClient(provider: Provider, auth: MailAuth): ImapFlow {
+export function createImapClient(provider: ImapProvider, auth: MailAuth): ImapFlow {
 	const { host, port, secure } = PROVIDER_CONFIG[provider].imap;
 	const client = new ImapFlow({
 		host,
@@ -36,6 +33,7 @@ export function createImapClient(provider: Provider, auth: MailAuth): ImapFlow {
 }
 
 async function connect(account: MailAccount): Promise<ImapFlow> {
+	if (account.provider === 'exchange') throw new Error('Exchange accounts do not use IMAP.');
 	const client = createImapClient(account.provider, await mailAuth(account));
 	client.on('close', () => {
 		if (pool.get(account.id)?.client === client) pool.delete(account.id);
@@ -127,13 +125,7 @@ async function toMailError(account: MailAccount, error: unknown): Promise<MailEr
 			502
 		);
 	}
-	if (accountLevel) {
-		await db
-			.update(mailAccount)
-			.set({ lastError: mailError.message })
-			.where(eq(mailAccount.id, account.id));
-		account.lastError = mailError.message;
-	}
+	if (accountLevel) await recordAccountError(account, mailError.message);
 	return mailError;
 }
 
@@ -144,10 +136,7 @@ export async function withClient<T>(
 ): Promise<T> {
 	try {
 		const result = await fn(await getClient(account));
-		if (account.lastError) {
-			await db.update(mailAccount).set({ lastError: null }).where(eq(mailAccount.id, account.id));
-			account.lastError = null;
-		}
+		await clearAccountError(account);
 		return result;
 	} catch (error) {
 		throw await toMailError(account, error);

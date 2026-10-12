@@ -19,7 +19,9 @@
 		purelymail:
 			'Use your Purelymail password, or an app password if two-factor authentication is on.',
 		microsoft:
-			'Sign in with Microsoft. Your organization may require an administrator to approve this app.'
+			'Sign in with Microsoft. Your organization may require an administrator to approve this app.',
+		exchange:
+			"Your organization's Exchange server (Outlook on the web). Uses Exchange Web Services with your user name and password."
 	};
 </script>
 
@@ -31,7 +33,7 @@
 	<fieldset class="flex flex-col gap-2">
 		<legend class="mb-2 text-sm font-medium">Provider</legend>
 		<div class="flex flex-wrap gap-2">
-			{#each ['gmail', 'purelymail', 'microsoft'] as const as option (option)}
+			{#each ['gmail', 'purelymail', 'microsoft', 'exchange'] as const as option (option)}
 				<label
 					class={[
 						'flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm',
@@ -106,6 +108,30 @@
 					value={form?.displayName ?? ''}
 				/>
 			</div>
+			{#if provider === 'exchange'}
+				<div class="grid gap-1.5">
+					<Label for="server">Server</Label>
+					<Input
+						id="server"
+						name="server"
+						required
+						autocomplete="off"
+						placeholder="webmail.example.org"
+						value={form?.server ?? ''}
+					/>
+				</div>
+				<div class="grid gap-1.5">
+					<Label for="username">User name</Label>
+					<Input
+						id="username"
+						name="username"
+						autocomplete="username"
+						placeholder="DOMAIN\user"
+						value={form?.username ?? ''}
+					/>
+					<p class="text-sm text-muted-foreground">Leave empty to sign in with the address.</p>
+				</div>
+			{/if}
 			<div class="grid gap-1.5">
 				<Label for="password">{provider === 'gmail' ? 'App password' : 'Password'}</Label>
 				<Input id="password" name="password" type="password" required autocomplete="off" />

@@ -5,7 +5,6 @@ import { mailAccount } from '../db/schema';
 import { decryptSecret, encryptSecret } from '../crypto';
 import { MailAuthError } from './errors';
 import { refreshMicrosoftToken } from './microsoft';
-import { PROVIDER_CONFIG } from './providers';
 import type { MailAccount } from './types';
 
 /** IMAP/SMTP login: a password, or an OAuth access token for XOAUTH2. */
@@ -54,8 +53,8 @@ async function microsoftAccessToken(account: MailAccount): Promise<string> {
 }
 
 export async function mailAuth(account: MailAccount): Promise<MailAuth> {
-	if (PROVIDER_CONFIG[account.provider].auth === 'oauth') {
+	if (account.provider === 'microsoft') {
 		return { user: account.email, accessToken: await microsoftAccessToken(account) };
 	}
-	return { user: account.email, pass: openSecret(account) };
+	return { user: account.username ?? account.email, pass: openSecret(account) };
 }

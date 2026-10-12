@@ -35,10 +35,15 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
 
 ## Architecture Rules
 
-- All IMAP/SMTP access goes through `src/lib/server/mail/`. Routes and MCP tools never talk to
-  `imapflow` or `nodemailer` directly.
-  - `imap.ts`: the per-account connection pool (`withClient`, `withMailbox`). It records account
-    failures in `mail_account.last_error`.
+- All IMAP/SMTP and Exchange access goes through `src/lib/server/mail/`. Routes and MCP tools never
+  talk to `imapflow`, `nodemailer`, or Exchange directly. The public functions in `messages.ts`,
+  `folders.ts`, `compose.ts`, and `accounts.ts` branch on `provider === 'exchange'`.
+  - `imap.ts`: the per-account connection pool (`withClient`, `withMailbox`). Account failures are
+    recorded in `mail_account.last_error` through `account-status.ts`.
+  - `ews/`: Exchange accounts over Exchange Web Services (SOAP, Basic authentication, the account's
+    `server` and optional `username`), with no IMAP: `client.ts` (requests and errors),
+    `requests.ts` (request bodies), `items.ts` (response mapping), `folders.ts`, `messages.ts`, and
+    `compose.ts` (drafts and sending as MIME, native meeting responses). Lists page by position.
   - `messages.ts`: listing, search, reading, moving, and threads. Reading fetches only body text,
     calendar parts, and embedded images (`structure.ts`); attachments download on demand. Read
     messages stay in an in-memory cache that `setFlags`, `moveMessages`, and `deleteMessages` keep
@@ -50,8 +55,10 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
 - Reply and forward headers (`In-Reply-To`, `References`, subject prefixes, recipients) are built
   only by `prepareReply` / `prepareForward` in `compose.ts`, using `threading.ts`. Never accept them
   from MCP input.
-- Messages are addressed by opaque refs from `message-ref.ts` (account, path, UIDVALIDITY, UID).
-  Resolve them with `resolveRef` / `groupRefs`, which scope accounts to the user.
+- Messages are addressed by opaque refs from `message-ref.ts`: account, path, UIDVALIDITY, and UID
+  over IMAP; account, folder path, and EWS item ID on Exchange. Resolve them with `resolveRef` /
+  `groupRefs`, which scope accounts to the user; `imapLocator` / `ewsLocator` reject a ref of the
+  wrong kind.
 - Mail is never stored in the database. Credentials are AES-GCM encrypted with `CREDENTIALS_KEY`
   (`crypto.ts`, `credentials.ts`); never return `MailAccount.secret` to the browser (use
   `toSummary`).

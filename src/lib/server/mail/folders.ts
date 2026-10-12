@@ -1,8 +1,14 @@
 import type { ListResponse } from 'imapflow';
 import { FOLDER_ROLES, isFolderRole, type FolderRole } from '../../mail-types';
 import { MailError } from './errors';
+import {
+	createArchiveFolder,
+	ewsFolders,
+	inboxUnreadCount,
+	invalidateEwsFolders
+} from './ews/folders';
 import { withClient } from './imap';
-import { PROVIDER_CONFIG } from './providers';
+import { PROVIDER_CONFIG, type ImapProvider } from './providers';
 import type { MailAccount } from './types';
 
 export interface Folder {
@@ -17,6 +23,7 @@ const cache = new Map<string, { folders: Folder[]; at: number }>();
 
 export function invalidateFolders(accountId: string): void {
 	cache.delete(accountId);
+	invalidateEwsFolders(accountId);
 }
 
 const SPECIAL_USE_ROLES: Record<string, FolderRole> = {
@@ -30,15 +37,28 @@ const SPECIAL_USE_ROLES: Record<string, FolderRole> = {
 /** Gmail's label views that duplicate other folders and are not useful as plain folders. */
 const HIDDEN_SPECIAL_USE = new Set(['\\Flagged', '\\Important']);
 
-export function folderRole(account: Pick<MailAccount, 'provider'>, entry: ListResponse) {
+export function folderRole(provider: ImapProvider, entry: ListResponse) {
 	if (entry.path.toUpperCase() === 'INBOX') return 'inbox';
 	if (!entry.specialUse) return null;
-	if (entry.specialUse === PROVIDER_CONFIG[account.provider].archiveSpecialUse) return 'archive';
+	if (entry.specialUse === PROVIDER_CONFIG[provider].archiveSpecialUse) return 'archive';
 	return SPECIAL_USE_ROLES[entry.specialUse] ?? null;
+}
+
+/** Role folders in a fixed order, then custom folders by path. */
+function sortFolders(folders: Folder[]): Folder[] {
+	return folders.sort((a, b) => {
+		const ra = a.role ? FOLDER_ROLES.indexOf(a.role) : FOLDER_ROLES.length;
+		const rb = b.role ? FOLDER_ROLES.indexOf(b.role) : FOLDER_ROLES.length;
+		return ra - rb || a.path.localeCompare(b.path);
+	});
 }
 
 /** Selectable folders: role folders in a fixed order, then custom folders by path. */
 export async function getFolders(account: MailAccount): Promise<Folder[]> {
+	if (account.provider === 'exchange') {
+		return sortFolders([...(await ewsFolders(account)).folders]);
+	}
+	const provider = account.provider;
 	const cached = cache.get(account.id);
 	if (cached && cached.at + FOLDER_TTL_MS > Date.now()) return cached.folders;
 	const entries = await withClient(account, (client) => client.list());
@@ -46,7 +66,7 @@ export async function getFolders(account: MailAccount): Promise<Folder[]> {
 	const folders: Folder[] = [];
 	for (const entry of entries) {
 		if (entry.flags.has('\\Noselect') || entry.flags.has('\\NonExistent')) continue;
-		let role: FolderRole | null = folderRole(account, entry);
+		let role: FolderRole | null = folderRole(provider, entry);
 		if (role && taken.has(role)) role = null;
 		if (
 			!role &&
@@ -58,11 +78,7 @@ export async function getFolders(account: MailAccount): Promise<Folder[]> {
 		if (role) taken.add(role);
 		folders.push({ path: entry.path, name: entry.name, depth: entry.parent.length, role });
 	}
-	folders.sort((a, b) => {
-		const ra = a.role ? FOLDER_ROLES.indexOf(a.role) : FOLDER_ROLES.length;
-		const rb = b.role ? FOLDER_ROLES.indexOf(b.role) : FOLDER_ROLES.length;
-		return ra - rb || a.path.localeCompare(b.path);
-	});
+	sortFolders(folders);
 	cache.set(account.id, { folders, at: Date.now() });
 	return folders;
 }
@@ -88,6 +104,7 @@ export async function ensureArchiveFolder(account: MailAccount): Promise<string>
 	const existing = await resolveFolder(account, 'archive');
 	if (existing) return existing;
 	if (account.provider === 'gmail') throw new MailError('Gmail All Mail folder not found.', 404);
+	if (account.provider === 'exchange') return createArchiveFolder(account);
 	const created = await withClient(account, (client) => client.mailboxCreate('Archive'));
 	invalidateFolders(account.id);
 	return created.path;
@@ -100,6 +117,9 @@ export async function inboxUnreadCounts(
 	const entries = await Promise.all(
 		accounts.map(async (account) => {
 			try {
+				if (account.provider === 'exchange') {
+					return [account.id, await inboxUnreadCount(account)] as const;
+				}
 				const status = await withClient(account, (client) =>
 					client.status('INBOX', { unseen: true })
 				);

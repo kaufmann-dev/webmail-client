@@ -6,7 +6,7 @@ function msg(accountId: string, uid: number, date: string): MessageSummary {
 	return {
 		ref: `${accountId}:${uid}`,
 		accountId,
-		uid,
+		cursor: uid,
 		from: null,
 		to: [],
 		subject: '',

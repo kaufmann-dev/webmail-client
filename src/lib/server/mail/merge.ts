@@ -1,14 +1,15 @@
 import type { MessageSummary } from '../../mail-types';
 
 /**
- * Per-account paging state for merged lists: the UID below which the next page starts, or 0 when
- * the account has nothing more. Accounts missing from the map start at the newest message.
+ * Per-account paging state for merged lists, or 0 when the account has nothing more: over IMAP the
+ * UID below which the next page starts, on Exchange the number of messages already listed.
+ * Accounts missing from the map start at the newest message. See `MessageSummary.cursor`.
  */
 export type ListCursor = Record<string, number>;
 
 export interface AccountPage {
 	accountId: string;
-	/** Newest first (descending UID). */
+	/** Newest first, in the account's paging order. */
 	items: MessageSummary[];
 	/** True when no messages exist below the last item. */
 	exhausted: boolean;
@@ -34,9 +35,9 @@ export function decodeCursor(value: string | null | undefined): ListCursor {
 const time = (message: MessageSummary) => Date.parse(message.date) || 0;
 
 /**
- * K-way merge of per-account pages by date. Each account's page is consumed strictly from its
- * newest UID downwards, so the next cursor (the lowest consumed UID) never skips a message, even
- * when dates and UIDs disagree.
+ * K-way merge of per-account pages by date. Each account's page is consumed strictly in its own
+ * order, so the next cursor (that of the last consumed message) never skips a message, even when
+ * dates and paging order disagree.
  */
 export function mergePages(
 	pages: AccountPage[],
@@ -59,7 +60,7 @@ export function mergePages(
 	for (const [i, page] of pages.entries()) {
 		const consumed = positions[i];
 		if (consumed === page.items.length && page.exhausted) cursor[page.accountId] = 0;
-		else if (consumed > 0) cursor[page.accountId] = page.items[consumed - 1].uid;
+		else if (consumed > 0) cursor[page.accountId] = page.items[consumed - 1].cursor;
 	}
 	const more = pages.some((page) => cursor[page.accountId] !== 0);
 	return { messages, cursor: more ? cursor : null };

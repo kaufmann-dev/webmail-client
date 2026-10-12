@@ -35,6 +35,10 @@ export const mailAccount = pgTable(
 		signature: text('signature'),
 		sortOrder: integer('sort_order').notNull().default(0),
 		secret: text('secret').notNull(),
+		/** Exchange only: the EWS host, e.g. `webmail.example.org`. */
+		server: text('server'),
+		/** Exchange only: the sign-in name when it is not the address, e.g. `DOMAIN\user`. */
+		username: text('username'),
 		lastError: text('last_error'),
 		createdAt: timestamp('created_at').defaultNow().notNull(),
 		updatedAt: timestamp('updated_at')

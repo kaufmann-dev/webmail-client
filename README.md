@@ -4,7 +4,7 @@
 [Mail Accounts](#mail-accounts) · [MCP Server](#mcp-server) ·
 [Authentication Setup](#authentication-setup) · [Coolify Deployment](#coolify-deployment)
 
-A private webmail client for Gmail, Purelymail, and Microsoft 365 accounts, served at
+A private webmail client for Gmail, Purelymail, Microsoft 365, and Exchange accounts, served at
 `mail.kaufmann.dev`. It shows every account on its own and also as one unified "All accounts" view.
 The same server hosts a remote MCP server. AI apps such as Claude or ChatGPT connect to it once,
 and on the consent screen you choose which mail accounts each app may use and at what level.
@@ -19,12 +19,12 @@ and on the consent screen you choose which mail accounts each app may use and at
   away, except in Spam, where they stay blocked until you load them.
 - **Invitations:** calendar invitations show their time, place, and organizer. Accept, Maybe, and
   Decline send the standard calendar reply to the organizer. The provider's own calendar does not
-  learn the answer.
+  learn the answer, except on Exchange, which answers its own meeting requests.
 - **Writing:** reply, reply all, forward (attachments included), drafts, attachments, and a
   signature per account. Replies keep `In-Reply-To` and `References`, so they stay in the
   conversation.
-- **Live IMAP/SMTP:** mail is never copied into the database. The database stores only the app's
-  own data: accounts with encrypted credentials, signatures, and MCP grants.
+- **Live IMAP/SMTP and Exchange:** mail is never copied into the database. The database stores only
+  the app's own data: accounts with encrypted credentials, signatures, and MCP grants.
 
 Stack: SvelteKit 3 (adapter-node) with Svelte 5, Tailwind and shadcn-svelte, Drizzle and PostgreSQL,
 Better Auth (Pocket ID sign-in and the MCP OAuth server), the MCP TypeScript SDK v2, imapflow,
@@ -71,8 +71,8 @@ Better Auth tables live in `src/lib/server/db/auth-schema.ts`. The app's own tab
 
 ## Mail Accounts
 
-Add accounts under **Settings → Mail accounts → Add account**. The app tests IMAP and SMTP before it
-saves an account.
+Add accounts under **Settings → Mail accounts → Add account**. The app tests the connection (IMAP
+and SMTP, or Exchange Web Services) before it saves an account.
 
 - **Gmail:** enable 2-Step Verification, then create an app password (Google Account → Security →
   App passwords) and use it instead of the Google password. IMAP is always on for personal Gmail.
@@ -89,6 +89,12 @@ saves an account.
   If the organization blocks user consent, ask its IT department to approve the app. The mailbox
   must also have IMAP and authenticated SMTP enabled. If not, the connection test reports the
   rejected login.
+
+- **Exchange** (an organization's own Exchange server with Outlook on the web, where IMAP may be
+  off): the server's host name (for example `webmail.example.org`), the sign-in name if it is not
+  the address (for example `DOMAIN\user`), and the password. The app talks to Exchange Web
+  Services at `https://<server>/EWS/Exchange.asmx` with Basic authentication. Meeting invitations
+  are answered through Exchange, so its calendar learns the answer.
 
 ## MCP Server
 
