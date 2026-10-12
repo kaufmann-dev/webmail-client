@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import MailComposer from 'nodemailer/lib/mail-composer';
 import { EMPTY_LINE } from '../../html';
 import type { Address, AttachmentInfo, InvitationResponse } from '../../mail-types';
-import { getAccount, listAccounts } from './accounts';
+import { getAccount, listAccounts, toSummary } from './accounts';
 import { mailAuth } from './credentials';
 import { errorMessage, MailError } from './errors';
 import { requireFolder, resolveFolder } from './folders';
@@ -176,7 +176,7 @@ async function buildRaw(
 		cc: draft.cc,
 		bcc: draft.bcc,
 		subject: draft.subject,
-		html: outgoingHtml(draft.html),
+		html: outgoingHtml(draft.html, toSummary(account).font),
 		text: plainTextOf(draft.html),
 		// Pasted images, signature images, and quoted inline images go out as embedded parts.
 		attachDataUrls: true,

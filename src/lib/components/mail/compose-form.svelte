@@ -272,6 +272,7 @@
 					name="body"
 					value={initial.body}
 					label="Message"
+					font={account?.font ?? null}
 					autofocus={initial.mode !== 'new'}
 					onchange={() => (dirty = true)}
 					onescape={() => !confirmDiscard && !pending && close()}

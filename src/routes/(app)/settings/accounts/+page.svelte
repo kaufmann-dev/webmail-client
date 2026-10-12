@@ -18,11 +18,14 @@
 	import { Label } from '#lib/components/ui/label/index.js';
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
 	import { postAction } from '#lib/form-action.js';
+	import { isMailFont, MAIL_FONTS, type MailFont } from '#lib/html.js';
 	import { ACCOUNT_COLORS, PROVIDER_LABELS, type AccountSummary } from '#lib/mail-types.js';
 
 	let { data, form } = $props();
 
 	let removing = $state<AccountSummary | null>(null);
+	// Fonts chosen but not yet saved, so the signature editor shows them.
+	let fonts = $state<Record<string, MailFont | null>>({});
 	// Removing and reordering show at once and are saved in the background.
 	const removed = new SvelteSet<string>();
 	let localOrder = $state<string[] | null>(null);
@@ -173,11 +176,33 @@
 						</div>
 					</div>
 					<div class="grid gap-1.5">
+						<Label for="font-{account.id}">Font</Label>
+						<NativeSelect
+							id="font-{account.id}"
+							name="font"
+							value={account.font ?? ''}
+							onchange={(event) => {
+								const value = event.currentTarget.value;
+								fonts[account.id] = isMailFont(value) ? value : null;
+							}}
+							class="w-56"
+						>
+							<NativeSelectOption value="">Default (no font)</NativeSelectOption>
+							{#each Object.entries(MAIL_FONTS) as [key, font] (key)}
+								<NativeSelectOption value={key}>{font.label}</NativeSelectOption>
+							{/each}
+						</NativeSelect>
+						<p class="text-xs text-muted-foreground">
+							Default leaves the font to the recipient's mail program.
+						</p>
+					</div>
+					<div class="grid gap-1.5">
 						<Label>Signature</Label>
 						<HtmlEditor
 							name="signature"
 							value={account.signature ?? ''}
 							label="Signature for {account.email}"
+							font={account.id in fonts ? fonts[account.id] : account.font}
 							minHeight={120}
 						/>
 					</div>

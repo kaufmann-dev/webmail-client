@@ -11,12 +11,18 @@ describe('textToComposeHtml', () => {
 });
 
 describe('outgoingHtml', () => {
-	it('wraps the content in a document with the mail font', () => {
-		const html = outgoingHtml('<div>Hi</div>');
-		expect(html).toMatch(
-			/^<!doctype html><html><head><meta charset="utf-8"><\/head><body style="font-family: Arial/
+	it('wraps the content in a document in the account font', () => {
+		expect(outgoingHtml('<div>Hi</div>', 'calibri')).toBe(
+			'<!doctype html><html><head><meta charset="utf-8"></head>' +
+				'<body><div style="font-family: Calibri, Carlito, \'Segoe UI\', Arial, sans-serif; font-size: 11pt">' +
+				'<div>Hi</div></div></body></html>'
 		);
-		expect(html).toMatch(/<div>Hi<\/div><\/body><\/html>$/);
+	});
+
+	it('names no font without one', () => {
+		expect(outgoingHtml('<div>Hi</div>', null)).toBe(
+			'<!doctype html><html><head><meta charset="utf-8"></head><body><div>Hi</div></body></html>'
+		);
 	});
 });
 

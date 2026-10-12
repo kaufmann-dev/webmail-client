@@ -16,7 +16,7 @@
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
 	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
-	import { EMPTY_LINE, MAIL_FONT, REMOTE_RESOURCE } from '#lib/html.js';
+	import { EMPTY_LINE, mailFontStyle, REMOTE_RESOURCE, type MailFont } from '#lib/html.js';
 	import { cleanPastedHtml } from '#lib/paste-html.js';
 
 	let {
@@ -25,6 +25,7 @@
 		label,
 		minHeight = 256,
 		autofocus = false,
+		font = null,
 		onchange,
 		onescape
 	}: {
@@ -34,6 +35,8 @@
 		label: string;
 		minHeight?: number;
 		autofocus?: boolean;
+		/** The sending account's font, shown while writing; null for the recipient's default. */
+		font?: MailFont | null;
 		onchange?: () => void;
 		onescape?: () => void;
 	} = $props();
@@ -77,6 +80,7 @@
 
 	let frame: HTMLIFrameElement | null = null;
 	let doc: Document | null = null;
+	let loaded = $state(false);
 	/** The selection inside the editor, kept while toolbar menus and dialogs take focus. */
 	let saved: Range | null = null;
 
@@ -84,7 +88,7 @@
 	// while editing; remote images stay in the markup and are sent with the message.
 	const CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data: blob:";
 	const STYLE = `html{background:#fff}
-body{margin:0;padding:12px 14px;color:#111;${MAIL_FONT};overflow-wrap:anywhere}
+body{margin:0;padding:12px 14px;color:#111;font:14px/1.4 system-ui,-apple-system,'Segoe UI',sans-serif;overflow-wrap:anywhere}
 body:focus{outline:none}
 img{max-width:100%;height:auto}
 a{color:#1a56c4}`;
@@ -238,6 +242,12 @@ a{color:#1a56c4}`;
 		selection?.addRange(range);
 	}
 
+	/** The font is a style on the editor's body, outside the HTML that is sent. */
+	function showFont(element: HTMLIFrameElement) {
+		const body = loaded ? element.contentDocument?.body : null;
+		if (body) body.setAttribute('style', mailFontStyle(font));
+	}
+
 	function editor(element: HTMLIFrameElement) {
 		let observer: ResizeObserver | undefined;
 		const load = () => {
@@ -273,12 +283,14 @@ a{color:#1a56c4}`;
 			observer = new ResizeObserver(resize);
 			observer.observe(d.body);
 			resize();
+			loaded = true;
 			if (autofocus) focus();
 		};
 		element.addEventListener('load', load);
 		return () => {
 			element.removeEventListener('load', load);
 			observer?.disconnect();
+			loaded = false;
 			doc = null;
 			frame = null;
 		};
@@ -437,6 +449,7 @@ a{color:#1a56c4}`;
 		sandbox="allow-same-origin"
 		{srcdoc}
 		{@attach editor}
+		{@attach showFont}
 		class="block w-full bg-white"
 		style:height="{minHeight}px"
 	></iframe>

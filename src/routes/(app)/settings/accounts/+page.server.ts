@@ -1,5 +1,6 @@
 import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
+import { isMailFont } from '#lib/html.js';
 import { ACCOUNT_COLORS } from '#lib/mail-types.js';
 import { deleteAccount, moveAccount, updateAccount } from '#lib/server/mail/accounts.js';
 import { MailError } from '#lib/server/mail/errors.js';
@@ -12,6 +13,8 @@ const updateSchema = z.object({
 	color: z.enum(ACCOUNT_COLORS),
 	// HTML; small embedded images arrive as data URIs.
 	signature: z.string().max(2_000_000),
+	// Empty sends mail without a font.
+	font: z.string().refine((value) => value === '' || isMailFont(value)),
 	password: z.string().max(500).optional()
 });
 
@@ -29,9 +32,13 @@ export const actions: Actions = {
 	update: async ({ request, locals }) => {
 		const parsed = updateSchema.safeParse(Object.fromEntries(await request.formData()));
 		if (!parsed.success) return fail(400, { id: '', error: 'Check the highlighted fields.' });
-		const { id, password, ...fields } = parsed.data;
+		const { id, password, font, ...fields } = parsed.data;
 		return guard(id, () =>
-			updateAccount(locals.user.id, id, { ...fields, password: password || undefined })
+			updateAccount(locals.user.id, id, {
+				...fields,
+				font: font && isMailFont(font) ? font : null,
+				password: password || undefined
+			})
 		);
 	},
 	delete: async ({ request, locals }) => {

@@ -23,7 +23,8 @@ and on the consent screen you choose which mail accounts each app may use and at
 - **Writing:** HTML mail in an editor with bold, italic, underline, text color, lists, links, and
   images; reply, reply all, forward (attachments included), drafts, and attachments. Quoted and
   forwarded messages keep their layout and stay editable. Each account has a formatted signature
-  (Settings → Mail accounts) that follows the chosen sender. Replies keep `In-Reply-To` and
+  and a font (Settings → Mail accounts) that follow the chosen sender; the default font leaves it
+  to the recipient's mail program, or pick a common font such as Calibri. Replies keep `In-Reply-To` and
   `References`, so they stay in the conversation.
 - **Live IMAP/SMTP and Exchange:** mail is never copied into the database. The database stores only
   the app's own data: accounts with encrypted credentials, signatures, and MCP grants.

@@ -1,4 +1,5 @@
 import { and, asc, eq } from 'drizzle-orm';
+import { isMailFont, type MailFont } from '../../html';
 import { db } from '../db';
 import { mailAccount } from '../db/schema';
 import {
@@ -27,6 +28,7 @@ export function toSummary(account: MailAccount): AccountSummary {
 		label: account.label,
 		color: account.color,
 		signature: account.signature,
+		font: account.font && isMailFont(account.font) ? account.font : null,
 		lastError: account.lastError
 	};
 }
@@ -194,6 +196,7 @@ export async function updateAccount(
 		displayName: string;
 		color: AccountColor;
 		signature: string;
+		font: MailFont | null;
 		password?: string;
 	}
 ): Promise<void> {
@@ -202,7 +205,8 @@ export async function updateAccount(
 		label: input.label.trim() || account.email,
 		displayName: input.displayName.trim() || account.email,
 		color: input.color,
-		signature: signatureOrNull(input.signature)
+		signature: signatureOrNull(input.signature),
+		font: input.font
 	};
 	if (input.password) {
 		if (account.provider === 'microsoft') {

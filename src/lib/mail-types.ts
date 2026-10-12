@@ -1,5 +1,7 @@
 /** Types and constants shared by the server mail layer and the UI. */
 
+import type { MailFont } from './html';
+
 export const PROVIDERS = ['gmail', 'purelymail', 'microsoft', 'exchange'] as const;
 export type Provider = (typeof PROVIDERS)[number];
 
@@ -88,6 +90,8 @@ export interface AccountSummary {
 	color: AccountColor;
 	/** Sanitized HTML, or null without a signature. */
 	signature: string | null;
+	/** Null sends mail without a font. */
+	font: MailFont | null;
 	lastError: string | null;
 }
 

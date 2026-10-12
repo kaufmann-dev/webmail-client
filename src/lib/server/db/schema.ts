@@ -34,6 +34,8 @@ export const mailAccount = pgTable(
 		label: text('label').notNull(),
 		color: accountColorEnum('color').notNull(),
 		signature: text('signature'),
+		/** A `MailFont` key; null sends mail without a font. */
+		font: text('font'),
 		sortOrder: integer('sort_order').notNull().default(0),
 		secret: text('secret').notNull(),
 		/** Exchange only: the EWS host, e.g. `webmail.example.org`. */

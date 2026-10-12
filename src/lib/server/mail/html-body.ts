@@ -1,5 +1,5 @@
 import { convert } from 'html-to-text';
-import { EMPTY_LINE, MAIL_FONT } from '../../html';
+import { EMPTY_LINE, mailFontStyle, type MailFont } from '../../html';
 import { linkify, sanitizeEmailHtml } from './render';
 
 /** Plain text (from AI clients and calendar replies) as editor HTML: one `<div>` per line. */
@@ -12,12 +12,14 @@ export function textToComposeHtml(text: string): string {
 		.join('');
 }
 
-/** The sent HTML document around the editor's content. */
-export function outgoingHtml(html: string): string {
-	return (
-		'<!doctype html><html><head><meta charset="utf-8"></head>' +
-		`<body style="${MAIL_FONT}">${html}</body></html>`
-	);
+/**
+ * The sent HTML document around the editor's content. The account's font goes on a wrapping
+ * `<div>`, since some mail programs (Gmail among them) drop styles on `<body>`.
+ */
+export function outgoingHtml(html: string, font: MailFont | null): string {
+	const style = mailFontStyle(font);
+	const body = style ? `<div style="${style}">${html}</div>` : html;
+	return `<!doctype html><html><head><meta charset="utf-8"></head><body>${body}</body></html>`;
 }
 
 /** The plain-text alternative of an HTML message; quotes keep their `> ` prefix. */

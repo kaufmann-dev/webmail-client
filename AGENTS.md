@@ -49,8 +49,8 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
     messages stay in an in-memory cache that `setFlags`, `moveMessages`, and `deleteMessages` keep
     current.
   - `compose.ts`: drafts and sending. Outgoing mail is HTML (`html-body.ts`: the document around
-    the editor HTML and its `html-to-text` plain-text alternative); `data:` images go out as
-    embedded parts.
+    the editor HTML, in the account's font from `MAIL_FONTS` in `src/lib/html.ts` or none, and its
+    `html-to-text` plain-text alternative); `data:` images go out as embedded parts.
   - `threading.ts`: pure reply and forward header logic, the HTML quote and forward block, and
     `composeBody` (text, `wm-signature` block, `wm-quote` block).
   - `invitations.ts`: pure calendar invitation parsing and iMIP replies (ical.js);
