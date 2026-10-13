@@ -595,7 +595,7 @@
 								class={[
 									'rounded-md px-2 py-1 capitalize',
 									activeFilter === filter
-										? 'bg-accent font-medium'
+										? 'bg-selected font-medium text-selected-foreground'
 										: 'text-muted-foreground hover:text-foreground'
 								]}>{filter}</a
 							>

@@ -111,7 +111,12 @@
 					{@const open = message.ref === openRef}
 					{@const unread = message.unread && !open}
 					<li
-						class={['flex items-stretch', open ? 'bg-accent' : 'hover:bg-muted']}
+						class={[
+							'flex items-stretch',
+							open
+								? 'relative bg-selected before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-primary'
+								: 'hover:bg-muted'
+						]}
 						draggable="true"
 						ondragstart={(event) => startDrag(event, message)}
 						{ondragend}

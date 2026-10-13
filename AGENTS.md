@@ -114,11 +114,15 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
 ## UI
 
 - Follow the flat (no shadows), lightly rounded (`--radius`), motionless defaults enforced in
-  `src/routes/layout.css`. Monochrome: a white light background and a soft near-black dark one.
+  `src/routes/layout.css`. Monochrome surfaces: a white light background and a soft near-black
+  dark one.
 - Gray fills come only from three tokens, without opacity modifiers: `muted` for hover and quiet
-  strips (date group headers, banners), `accent` for selected or active items and form fields,
-  and `input` for checkboxes. Lines use `border`.
-- Color appears only as account colors (`--account-*`), always next to the account label.
+  strips (date group headers, banners), `accent` for form fields and menu focus, and `input` for
+  checkboxes. Lines use `border`.
+- Blue (`primary`, `selected`, `selected-foreground`) means only selected, active, primary action,
+  or focus: the open message, current folder, active filter and tabs, primary buttons, checked
+  checkboxes, and the focus outline. Nothing else is blue.
+- Other color appears only as account colors (`--account-*`), always next to the account label.
 - Icon buttons explain themselves on hover with `TooltipButton` (`src/lib/components/tooltip-button.svelte`,
   `shortcut` for a keyboard key), not `title`. They still need an `sr-only` or `aria-label` name.
 - User actions show their result at once and finish in the background (`postAction` in

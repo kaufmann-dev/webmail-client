@@ -37,7 +37,7 @@
 				<label
 					class={[
 						'flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm',
-						provider === option ? 'border-foreground font-medium' : 'hover:bg-accent'
+						provider === option ? 'border-primary bg-selected font-medium' : 'hover:bg-accent'
 					]}
 				>
 					<input type="radio" name="provider-choice" value={option} bind:group={provider} />

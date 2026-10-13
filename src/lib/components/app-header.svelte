@@ -38,7 +38,9 @@
 					aria-current={active ? 'page' : undefined}
 					class={[
 						'px-2 py-1 text-sm whitespace-nowrap',
-						active ? 'font-medium' : 'text-muted-foreground hover:text-foreground'
+						active
+							? 'font-medium text-selected-foreground'
+							: 'text-muted-foreground hover:text-foreground'
 					]}
 				>
 					{link.label}

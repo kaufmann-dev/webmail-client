@@ -361,7 +361,7 @@ a{color:#1a56c4}`;
 		{tooltip}
 		{shortcut}
 		aria-pressed={active[format]}
-		class={active[format] ? 'bg-accent text-accent-foreground' : ''}
+		class={active[format] ? 'bg-selected text-selected-foreground' : ''}
 		onclick={() => run(FORMATS[format])}
 	>
 		{#if format === 'bold'}<Bold />{:else if format === 'italic'}<Italic
