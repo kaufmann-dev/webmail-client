@@ -191,7 +191,7 @@
 					{...props}
 					variant="ghost"
 					size="icon-xs"
-					class="shrink-0 group-focus-within:opacity-100 group-hover:opacity-100 aria-expanded:opacity-100 lg:opacity-0"
+					class="shrink-0 lg:hidden lg:group-focus-within:inline-flex lg:group-hover:inline-flex lg:aria-expanded:inline-flex"
 					tooltip="Folder actions"
 				>
 					<Ellipsis />

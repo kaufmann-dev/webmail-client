@@ -479,7 +479,7 @@
 	</div>
 {/snippet}
 
-<div class="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[14rem_minmax(20rem,26rem)_minmax(0,1fr)]">
+<div class="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[16rem_minmax(20rem,26rem)_minmax(0,1fr)]">
 	<aside class="relative hidden min-h-0 overflow-y-auto border-r lg:block">
 		{@render sidebar()}
 	</aside>
