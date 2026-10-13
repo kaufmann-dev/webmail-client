@@ -5,7 +5,8 @@ import { errorMessage, MailAuthError, MailError } from './errors';
 import { PROVIDER_CONFIG, type ImapProvider } from './providers';
 import type { MailAccount } from './types';
 
-const IDLE_CLOSE_MS = 5 * 60_000;
+/** Just under the 30-minute idle logout of most servers, so returning to the tab finds it open. */
+const IDLE_CLOSE_MS = 25 * 60_000;
 
 interface PoolEntry {
 	client?: ImapFlow;

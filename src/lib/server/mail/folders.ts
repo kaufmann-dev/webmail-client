@@ -9,6 +9,7 @@ import {
 } from './ews/folders';
 import { withClient } from './imap';
 import { PROVIDER_CONFIG, type ImapProvider } from './providers';
+import { staleCache } from './stale-cache';
 import type { MailAccount } from './types';
 
 export interface Folder {
@@ -18,11 +19,10 @@ export interface Folder {
 	role: FolderRole | null;
 }
 
-const FOLDER_TTL_MS = 5 * 60_000;
-const cache = new Map<string, { folders: Folder[]; at: number }>();
+const cache = staleCache(5 * 60_000, listFolders);
 
 export function invalidateFolders(accountId: string): void {
-	cache.delete(accountId);
+	cache.invalidate(accountId);
 	invalidateEwsFolders(accountId);
 }
 
@@ -53,14 +53,20 @@ function sortFolders(folders: Folder[]): Folder[] {
 	});
 }
 
-/** Selectable folders: role folders in a fixed order, then custom folders by path. */
+/**
+ * Selectable folders: role folders in a fixed order, then custom folders by path. A stale list is
+ * returned at once while it reloads in the background.
+ */
 export async function getFolders(account: MailAccount): Promise<Folder[]> {
 	if (account.provider === 'exchange') {
 		return sortFolders([...(await ewsFolders(account)).folders]);
 	}
+	return cache.get(account);
+}
+
+async function listFolders(account: MailAccount): Promise<Folder[]> {
+	if (account.provider === 'exchange') throw new Error('Exchange accounts do not use IMAP.');
 	const provider = account.provider;
-	const cached = cache.get(account.id);
-	if (cached && cached.at + FOLDER_TTL_MS > Date.now()) return cached.folders;
 	const entries = await withClient(account, (client) => client.list());
 	const taken = new Set<FolderRole>();
 	const folders: Folder[] = [];
@@ -78,9 +84,7 @@ export async function getFolders(account: MailAccount): Promise<Folder[]> {
 		if (role) taken.add(role);
 		folders.push({ path: entry.path, name: entry.name, depth: entry.parent.length, role });
 	}
-	sortFolders(folders);
-	cache.set(account.id, { folders, at: Date.now() });
-	return folders;
+	return sortFolders(folders);
 }
 
 /** The mailbox path for a role (`inbox`, `sent`, …) or an existing path; null when absent. */

@@ -1,6 +1,7 @@
 import type { FolderRole } from '../../../mail-types';
 import { MailError } from '../errors';
 import type { Folder } from '../folders';
+import { staleCache } from '../stale-cache';
 import type { MailAccount } from '../types';
 import { check, ewsCall, failed } from './client';
 import * as request from './requests';
@@ -12,11 +13,10 @@ export interface EwsFolders {
 	pathById: Map<string, string>;
 }
 
-const FOLDER_TTL_MS = 5 * 60_000;
-const cache = new Map<string, EwsFolders & { at: number }>();
+const cache = staleCache(5 * 60_000, findFolders);
 
 export function invalidateEwsFolders(accountId: string): void {
-	cache.delete(accountId);
+	cache.invalidate(accountId);
 }
 
 const DISTINGUISHED = [
@@ -103,9 +103,12 @@ export function buildFolders(found: XmlNode[], distinguished: Map<string, string
 	return { folders, idByPath, pathById };
 }
 
-export async function ewsFolders(account: MailAccount): Promise<EwsFolders> {
-	const cached = cache.get(account.id);
-	if (cached && cached.at + FOLDER_TTL_MS > Date.now()) return cached;
+/** The account's folders. A stale list is returned at once while it reloads in the background. */
+export function ewsFolders(account: MailAccount): Promise<EwsFolders> {
+	return cache.get(account);
+}
+
+async function findFolders(account: MailAccount): Promise<EwsFolders> {
 	const [ids, found] = await Promise.all([
 		ewsCall(account, request.distinguishedFolders(DISTINGUISHED)),
 		ewsCall(account, request.findFolders())
@@ -117,9 +120,7 @@ export async function ewsFolders(account: MailAccount): Promise<EwsFolders> {
 		}
 	});
 	const rootFolder = child(check(found[0]), 'RootFolder');
-	const result = buildFolders(list(child(rootFolder, 'Folders')?.Folder), distinguished);
-	cache.set(account.id, { ...result, at: Date.now() });
-	return result;
+	return buildFolders(list(child(rootFolder, 'Folders')?.Folder), distinguished);
 }
 
 export async function folderIdOf(account: MailAccount, path: string): Promise<string> {

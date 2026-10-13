@@ -31,7 +31,7 @@ async function openMessage(userId: string, ref: string): Promise<OpenedMessage> 
 
 /**
  * The open message (`?m=`), streamed so the reader opens before the body arrives. Loading never
- * marks it read (links preload on hover); the page does that once it is shown.
+ * marks it read (links preload on tap); the page does that once it is shown.
  */
 export const load: PageServerLoad = ({ url, locals }) => {
 	const ref = url.searchParams.get('m');

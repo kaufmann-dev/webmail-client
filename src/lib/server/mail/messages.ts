@@ -167,22 +167,25 @@ async function fetchAccountPage(
 		if (beforeUid !== undefined && beforeUid <= 1) {
 			return { accountId: account.id, items: [], exhausted: true };
 		}
+		const fields = threads ? THREAD_FETCH : SUMMARY_FETCH;
+		const toItems = (fetched: FetchMessageObject[]) =>
+			fetched.map((m) => toSummary(account, path, mailbox, m)).sort((a, b) => b.cursor - a.cursor);
+		// The newest messages of an unfiltered folder are its last sequence numbers, which rise with
+		// UIDs; SEARCH ALL would return every UID in the folder.
+		if (beforeUid === undefined && Object.keys(search).length === 0) {
+			const exists = mailbox.exists;
+			if (!exists) return { accountId: account.id, items: [], exhausted: true };
+			const fetched = await client.fetchAll(`${Math.max(1, exists - limit + 1)}:${exists}`, fields);
+			return { accountId: account.id, items: toItems(fetched), exhausted: exists <= limit };
+		}
 		const query: SearchObject = { ...search };
 		if (beforeUid !== undefined) query.uid = `1:${beforeUid - 1}`;
 		if (Object.keys(query).length === 0) query.all = true;
 		const found = ((await client.search(query, { uid: true })) || []).sort((a, b) => a - b);
 		const picked = found.slice(-limit);
 		if (!picked.length) return { accountId: account.id, items: [], exhausted: true };
-		const fetched = await client.fetchAll(picked, threads ? THREAD_FETCH : SUMMARY_FETCH, {
-			uid: true
-		});
-		return {
-			accountId: account.id,
-			items: fetched
-				.map((m) => toSummary(account, path, mailbox, m))
-				.sort((a, b) => b.cursor - a.cursor),
-			exhausted: found.length <= limit
-		};
+		const fetched = await client.fetchAll(picked, fields, { uid: true });
+		return { accountId: account.id, items: toItems(fetched), exhausted: found.length <= limit };
 	});
 }
 
