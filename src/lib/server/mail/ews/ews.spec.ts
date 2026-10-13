@@ -231,6 +231,22 @@ describe('requests', () => {
 		);
 	});
 
+	it('creates, renames, and deletes folders by escaped ID and name', () => {
+		expect(request.createFolder('A&B')).toContain(
+			'<m:ParentFolderId><t:DistinguishedFolderId Id="msgfolderroot"/></m:ParentFolderId>'
+		);
+		const nested = request.createFolder('Q<1>', 'F"1');
+		expect(nested).toContain('<m:ParentFolderId><t:FolderId Id="F&quot;1"/></m:ParentFolderId>');
+		expect(nested).toContain('<t:DisplayName>Q&lt;1&gt;</t:DisplayName>');
+		expect(request.renameFolder('F1', 'New & improved')).toContain(
+			'<t:FolderId Id="F1"/><t:Updates><t:SetFolderField><t:FieldURI FieldURI="folder:DisplayName"/>' +
+				'<t:Folder><t:DisplayName>New &amp; improved</t:DisplayName></t:Folder>'
+		);
+		expect(request.deleteFolder('F1')).toBe(
+			'<m:DeleteFolder DeleteType="HardDelete"><m:FolderIds><t:FolderId Id="F1"/></m:FolderIds></m:DeleteFolder>'
+		);
+	});
+
 	it('updates each item under its own element name', () => {
 		const xml = request.updateItems([
 			{ id: 'm1', type: 'MeetingRequest', fields: [request.setIsRead(true)] }

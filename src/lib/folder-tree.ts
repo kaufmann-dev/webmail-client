@@ -30,3 +30,26 @@ export function visibleTree<T extends { key: string; depth: number }>(
 	});
 	return rows;
 }
+
+interface NamedFolder {
+	path: string;
+	name: string;
+	depth: number;
+}
+
+/** A folder's path once renamed to `name`: the parent path and its delimiter stay. */
+export function renamedPath(folder: NamedFolder, name: string): string {
+	return folder.path.slice(0, folder.path.length - folder.name.length) + name;
+}
+
+/**
+ * Whether the folder at `path` is `folder` or one of its subfolders. A nested entry's delimiter is
+ * the character before its name, so `Projects2/Notes` is not inside `Projects`.
+ */
+export function isWithin(path: string, folder: NamedFolder, entries: NamedFolder[]): boolean {
+	if (path === folder.path) return true;
+	const entry = entries.find((e) => e.path === path);
+	if (!entry || entry.depth <= folder.depth) return false;
+	const delimiter = entry.path.charAt(entry.path.length - entry.name.length - 1);
+	return entry.path.startsWith(folder.path + delimiter);
+}

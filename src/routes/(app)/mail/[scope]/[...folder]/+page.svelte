@@ -14,6 +14,7 @@
 	import Star from '@lucide/svelte/icons/star';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import X from '@lucide/svelte/icons/x';
+	import FolderDialog, { type FolderRequest } from '#lib/components/mail/folder-dialog.svelte';
 	import MailSidebar from '#lib/components/mail/mail-sidebar.svelte';
 	import MessageList from '#lib/components/mail/message-list.svelte';
 	import MessageReader from '#lib/components/mail/message-reader.svelte';
@@ -27,6 +28,7 @@
 	import { Kbd } from '#lib/components/ui/kbd/index.js';
 	import * as Sheet from '#lib/components/ui/sheet/index.js';
 	import { Spinner } from '#lib/components/ui/spinner/index.js';
+	import { isWithin, renamedPath } from '#lib/folder-tree.js';
 	import { postAction } from '#lib/form-action.js';
 	import { switchedFolder, viewedRole } from '#lib/mail-scope.js';
 	import {
@@ -78,6 +80,7 @@
 	let sidebarOpen = $state(false);
 	let shortcutsOpen = $state(false);
 	let confirmDelete = $state<string[] | null>(null);
+	let folderRequest = $state<FolderRequest | null>(null);
 	let searchInput = $state<HTMLInputElement | null>(null);
 
 	type MailAction = 'flag' | 'move' | 'delete';
@@ -117,6 +120,41 @@
 	function refresh(...ids: string[]) {
 		refreshes.count++;
 		for (const id of ids) invalidate(id);
+	}
+
+	const FOLDER_ACTIONS = {
+		create: 'createFolder',
+		rename: 'renameFolder',
+		delete: 'deleteFolder'
+	} as const;
+
+	/** Runs a folder change; a renamed or deleted open folder is followed or left for the inbox. */
+	async function changeFolder(request: FolderRequest, name: string) {
+		folderRequest = null;
+		const path = request.kind === 'create' ? (request.parent?.path ?? '') : request.folder.path;
+		const error = await postAction(`${basePath}?/${FOLDER_ACTIONS[request.kind]}`, {
+			account: request.accountId,
+			path,
+			name
+		});
+		if (error) {
+			toast.error(error);
+			return;
+		}
+		if (
+			request.kind !== 'create' &&
+			data.scope === request.accountId &&
+			isWithin(data.folder, request.folder, data.folders[data.scope] ?? [])
+		) {
+			const folder =
+				request.kind === 'rename'
+					? renamedPath(request.folder, name) + data.folder.slice(request.folder.path.length)
+					: 'inbox';
+			await goto(resolve('/(app)/mail/[scope]/[...folder]', { scope: data.scope, folder }), {
+				replace: true
+			});
+		}
+		refresh('mail:counts');
 	}
 
 	function unsettled(serial: number) {
@@ -413,6 +451,10 @@
 		{onnavigate}
 		accepts={dropAccepts}
 		ondrop={dropOn}
+		onfolder={(request) => {
+			sidebarOpen = false;
+			folderRequest = request;
+		}}
 	/>
 {/snippet}
 
@@ -718,6 +760,13 @@
 		</AlertDialog.Footer>
 	</AlertDialog.Content>
 </AlertDialog.Root>
+
+<FolderDialog
+	request={folderRequest}
+	gmail={folderRequest ? accountsById.get(folderRequest.accountId)?.provider === 'gmail' : false}
+	onsubmit={changeFolder}
+	onclose={() => (folderRequest = null)}
+/>
 
 <Dialog.Root bind:open={shortcutsOpen}>
 	<Dialog.Content>

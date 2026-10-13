@@ -1,11 +1,14 @@
 import type { ListResponse } from 'imapflow';
-import { FOLDER_ROLES, isFolderRole, type FolderRole } from '../../mail-types';
+import { FOLDER_ROLE_LABELS, FOLDER_ROLES, isFolderRole, type FolderRole } from '../../mail-types';
 import { MailError } from './errors';
 import {
 	createArchiveFolder,
+	createEwsFolder,
+	deleteEwsFolder,
 	ewsFolders,
 	inboxUnreadCount,
-	invalidateEwsFolders
+	invalidateEwsFolders,
+	renameEwsFolder
 } from './ews/folders';
 import { withClient } from './imap';
 import { PROVIDER_CONFIG, type ImapProvider } from './providers';
@@ -112,6 +115,110 @@ export async function ensureArchiveFolder(account: MailAccount): Promise<string>
 	const created = await withClient(account, (client) => client.mailboxCreate('Archive'));
 	invalidateFolders(account.id);
 	return created.path;
+}
+
+const NAME_MAX = 100;
+
+/** A trimmed folder name that is one path segment on every provider. */
+function folderName(raw: string): string {
+	const name = raw.trim();
+	if (!name) throw new MailError('Enter a folder name.', 400);
+	if (name.length > NAME_MAX) {
+		throw new MailError(`Folder names can have at most ${NAME_MAX} characters.`, 400);
+	}
+	if (/[/\\]/.test(name)) throw new MailError('Folder names cannot contain "/" or "\\".', 400);
+	return name;
+}
+
+/** Rejects a name containing the IMAP server's hierarchy delimiter, which would nest it. */
+function requireNoDelimiter(name: string, delimiter: string | null | undefined): void {
+	if (delimiter && name.includes(delimiter)) {
+		throw new MailError(`Folder names cannot contain "${delimiter}" on this server.`, 400);
+	}
+}
+
+/** The path of the folder that holds `folder`; null at the top level. */
+function parentOf(folder: Folder): string | null {
+	return folder.depth ? folder.path.slice(0, -folder.name.length - 1) : null;
+}
+
+async function findFolder(account: MailAccount, path: string): Promise<Folder> {
+	const folder = (await getFolders(account)).find((f) => f.path === path);
+	if (!folder) throw new MailError('That folder does not exist.', 404);
+	return folder;
+}
+
+/** A folder the user may rename or delete: not one of the role folders. */
+async function customFolder(account: MailAccount, path: string): Promise<Folder> {
+	const folder = await findFolder(account, path);
+	if (folder.role) {
+		throw new MailError(`${FOLDER_ROLE_LABELS[folder.role]} cannot be changed.`, 400);
+	}
+	return folder;
+}
+
+async function requireFreeName(
+	account: MailAccount,
+	parent: string | null,
+	name: string,
+	except?: string
+): Promise<void> {
+	const taken = (await getFolders(account)).some(
+		(f) =>
+			f.path !== except && parentOf(f) === parent && f.name.toLowerCase() === name.toLowerCase()
+	);
+	if (taken) throw new MailError(`A folder named "${name}" already exists here.`, 409);
+}
+
+/** Creates a folder below `parent` (a path) or at the top level and returns its path. */
+export async function createFolder(
+	account: MailAccount,
+	parent: string | null,
+	rawName: string
+): Promise<string> {
+	const name = folderName(rawName);
+	if (parent) await findFolder(account, parent);
+	await requireFreeName(account, parent, name);
+	if (account.provider === 'exchange') return createEwsFolder(account, parent, name);
+	const created = await withClient(account, (client) => {
+		requireNoDelimiter(name, client.namespace?.delimiter);
+		return client.mailboxCreate(parent ? [parent, name] : name);
+	});
+	invalidateFolders(account.id);
+	return created.path;
+}
+
+/** Renames a folder in place and returns its new path. */
+export async function renameFolder(
+	account: MailAccount,
+	path: string,
+	rawName: string
+): Promise<string> {
+	const name = folderName(rawName);
+	const parent = parentOf(await customFolder(account, path));
+	await requireFreeName(account, parent, name, path);
+	if (account.provider === 'exchange') return renameEwsFolder(account, path, parent, name);
+	const renamed = await withClient(account, (client) => {
+		requireNoDelimiter(name, client.namespace?.delimiter);
+		return client.mailboxRename(path, parent ? [parent, name] : name);
+	});
+	invalidateFolders(account.id);
+	return renamed.newPath;
+}
+
+/** Deletes a folder with its subfolders and all their messages. */
+export async function deleteFolder(account: MailAccount, path: string): Promise<void> {
+	await customFolder(account, path);
+	if (account.provider === 'exchange') return deleteEwsFolder(account, path);
+	await withClient(account, async (client) => {
+		const doomed = (await client.list())
+			.filter((entry) => entry.path === path || entry.path.startsWith(path + entry.delimiter))
+			.map((entry) => entry.path)
+			// Subfolders first: servers refuse to delete a folder that still has children.
+			.sort((a, b) => b.length - a.length);
+		for (const doomedPath of doomed) await client.mailboxDelete(doomedPath);
+	});
+	invalidateFolders(account.id);
 }
 
 /** INBOX unread counts; null for accounts that could not be reached. */

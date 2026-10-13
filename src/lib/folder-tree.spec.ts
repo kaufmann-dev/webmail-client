@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { visibleTree } from './folder-tree';
+import { isWithin, renamedPath, visibleTree } from './folder-tree';
 
 const folders = [
 	{ key: 'Projects', depth: 0 },
@@ -35,5 +35,32 @@ describe('visibleTree', () => {
 		const rows = visibleTree(folders, new Set(['Projects']), 'Projects/Alpha/Notes');
 		expect(keys(rows)).toContain('Projects/Alpha/Notes');
 		expect(rows[0].expanded).toBe(true);
+	});
+});
+
+describe('renamedPath', () => {
+	it('keeps the parent path and its delimiter', () => {
+		expect(renamedPath({ path: 'INBOX.Projects.Alpha', name: 'Alpha', depth: 2 }, 'Beta')).toBe(
+			'INBOX.Projects.Beta'
+		);
+		expect(renamedPath({ path: 'Receipts', name: 'Receipts', depth: 0 }, 'Bills')).toBe('Bills');
+	});
+});
+
+describe('isWithin', () => {
+	const entries = [
+		{ path: 'Projects', name: 'Projects', depth: 0 },
+		{ path: 'Projects/Alpha', name: 'Alpha', depth: 1 },
+		{ path: 'Projects2', name: 'Projects2', depth: 0 },
+		{ path: 'Projects2/Notes', name: 'Notes', depth: 1 }
+	];
+
+	it('includes the folder and its subfolders only', () => {
+		const projects = entries[0];
+		expect(isWithin('Projects', projects, entries)).toBe(true);
+		expect(isWithin('Projects/Alpha', projects, entries)).toBe(true);
+		expect(isWithin('Projects2', projects, entries)).toBe(false);
+		expect(isWithin('Projects2/Notes', projects, entries)).toBe(false);
+		expect(isWithin('inbox', projects, entries)).toBe(false);
 	});
 });

@@ -14,8 +14,9 @@ and on the consent screen you choose which mail accounts each app may use and at
   view's folders. Switching keeps the kind of folder you are in, and `0`–`9` switch from the
   keyboard. Lists are grouped by date (Today, Yesterday, This week, Last week, then by month).
   Also search (Gmail search syntax for Gmail), unread and starred filters, multi-select
-  actions, moving messages by dragging them onto a folder, keyboard shortcuts (`?` lists them),
-  and a conversation view.
+  actions, moving messages by dragging them onto a folder, creating, renaming, and deleting an
+  account's own folders from the sidebar, keyboard shortcuts (`?` lists them), and a conversation
+  view.
 - **Reading:** HTML mail renders in a sandboxed frame with no scripts. Remote images load right
   away, except in Spam, where they stay blocked until you load them.
 - **Invitations:** calendar invitations show their time, place, and organizer. Accept, Maybe, and

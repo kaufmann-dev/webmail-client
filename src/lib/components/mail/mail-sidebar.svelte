@@ -3,9 +3,15 @@
 	import { SvelteSet } from 'svelte/reactivity';
 	import { resolve } from '$app/paths';
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
+	import Ellipsis from '@lucide/svelte/icons/ellipsis';
+	import FolderPlus from '@lucide/svelte/icons/folder-plus';
+	import Pencil from '@lucide/svelte/icons/pencil';
 	import Plus from '@lucide/svelte/icons/plus';
+	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import AccountSwitcher from '#lib/components/mail/account-switcher.svelte';
+	import type { FolderRequest } from '#lib/components/mail/folder-dialog.svelte';
 	import TooltipButton from '#lib/components/tooltip-button.svelte';
+	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
 	import { visibleTree, type TreeRow } from '#lib/folder-tree.js';
 	import { switchedFolder, viewedRole } from '#lib/mail-scope.js';
 	import { FOLDER_ROLES, FOLDER_ROLE_LABELS, type AccountSummary } from '#lib/mail-types.js';
@@ -19,7 +25,8 @@
 		folder,
 		onnavigate,
 		accepts = null,
-		ondrop
+		ondrop,
+		onfolder
 	}: {
 		accounts: AccountSummary[];
 		folders: Record<string, FolderEntry[]>;
@@ -31,6 +38,8 @@
 		/** While messages are dragged, whether a folder takes them. */
 		accepts?: ((destination: MoveDestination) => boolean) | null;
 		ondrop?: (destination: MoveDestination) => void;
+		/** Asks to create, rename, or delete a folder of the account in view. */
+		onfolder?: (request: FolderRequest) => void;
 	} = $props();
 
 	interface FolderLink {
@@ -39,6 +48,8 @@
 		depth: number;
 		unread: number | null;
 		destination: MoveDestination;
+		/** The account's folder; absent for the shared roles across all accounts. */
+		entry?: FolderEntry;
 	}
 
 	let dropTarget = $state<MoveDestination | null>(null);
@@ -114,7 +125,8 @@
 			label: entry.role ? FOLDER_ROLE_LABELS[entry.role] : entry.name,
 			depth: entry.role ? 0 : entry.depth,
 			unread: entry.role === 'inbox' ? unread[account.id] : null,
-			destination: folderDestination(account.id, entry)
+			destination: folderDestination(account.id, entry),
+			entry
 		}));
 	});
 	const roleLinks = $derived(links.filter((link) => link.destination.role));
@@ -147,7 +159,7 @@
 
 {#snippet folderRow(row: TreeRow<FolderLink>)}
 	{@const link = row.item}
-	<div class="flex min-w-0 items-center" style:padding-left="{link.depth * 0.75}rem">
+	<div class="group flex min-w-0 items-center" style:padding-left="{link.depth * 0.75}rem">
 		{#if row.hasChildren}
 			{@const action = row.expanded ? 'Collapse' : 'Expand'}
 			<TooltipButton
@@ -165,7 +177,46 @@
 			<span class="w-6 shrink-0" aria-hidden="true"></span>
 		{/if}
 		{@render folderLink(link, 0)}
+		{#if account && link.entry && onfolder}
+			{@render folderMenu(account.id, link.entry)}
+		{/if}
 	</div>
+{/snippet}
+
+{#snippet folderMenu(accountId: string, entry: FolderEntry)}
+	<DropdownMenu.Root>
+		<DropdownMenu.Trigger>
+			{#snippet child({ props })}
+				<TooltipButton
+					{...props}
+					variant="ghost"
+					size="icon-xs"
+					class="shrink-0 group-focus-within:opacity-100 group-hover:opacity-100 aria-expanded:opacity-100 lg:opacity-0"
+					tooltip="Folder actions"
+				>
+					<Ellipsis />
+					<span class="sr-only">Actions for {entry.name}</span>
+				</TooltipButton>
+			{/snippet}
+		</DropdownMenu.Trigger>
+		<DropdownMenu.Content align="start">
+			<DropdownMenu.Item onSelect={() => onfolder?.({ kind: 'create', accountId, parent: entry })}>
+				<FolderPlus />
+				New subfolder
+			</DropdownMenu.Item>
+			<DropdownMenu.Item onSelect={() => onfolder?.({ kind: 'rename', accountId, folder: entry })}>
+				<Pencil />
+				Rename
+			</DropdownMenu.Item>
+			<DropdownMenu.Item
+				variant="destructive"
+				onSelect={() => onfolder?.({ kind: 'delete', accountId, folder: entry })}
+			>
+				<Trash2 />
+				Delete
+			</DropdownMenu.Item>
+		</DropdownMenu.Content>
+	</DropdownMenu.Root>
 {/snippet}
 
 {#snippet folderLink(link: FolderLink, depth = link.depth)}
@@ -200,9 +251,23 @@
 					{@render folderLink(link)}
 				{/each}
 			</div>
-			{#if customRows.length}
+			{#if customRows.length || (account && onfolder)}
 				<div class="flex flex-col">
-					<h2 class="px-2 pb-1 text-xs font-medium text-muted-foreground">Folders</h2>
+					<div class="flex items-center justify-between pb-1 pl-2">
+						<h2 class="text-xs font-medium text-muted-foreground">Folders</h2>
+						{#if account && onfolder}
+							{@const accountId = account.id}
+							<TooltipButton
+								variant="ghost"
+								size="icon-xs"
+								tooltip="New folder"
+								onclick={() => onfolder({ kind: 'create', accountId, parent: null })}
+							>
+								<Plus />
+								<span class="sr-only">New folder</span>
+							</TooltipButton>
+						{/if}
+					</div>
 					{#each customRows as row (row.item.key)}
 						{@render folderRow(row)}
 					{/each}

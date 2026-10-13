@@ -137,6 +137,48 @@ export async function createArchiveFolder(account: MailAccount): Promise<string>
 	return 'Archive';
 }
 
+function checkFolder(message: XmlNode | undefined, name: string): void {
+	if (text(message?.ResponseCode) === 'ErrorFolderExists') {
+		throw new MailError(`A folder named "${name}" already exists here.`, 409);
+	}
+	check(message);
+}
+
+/** Creates a folder below `parent` (a path) or at the top level and returns its path. */
+export async function createEwsFolder(
+	account: MailAccount,
+	parent: string | null,
+	name: string
+): Promise<string> {
+	const parentId = parent ? await folderIdOf(account, parent) : undefined;
+	const [message] = await ewsCall(account, request.createFolder(name, parentId));
+	checkFolder(message, name);
+	invalidateEwsFolders(account.id);
+	return parent ? `${parent}/${name}` : name;
+}
+
+export async function renameEwsFolder(
+	account: MailAccount,
+	path: string,
+	parent: string | null,
+	name: string
+): Promise<string> {
+	const [message] = await ewsCall(
+		account,
+		request.renameFolder(await folderIdOf(account, path), name)
+	);
+	checkFolder(message, name);
+	invalidateEwsFolders(account.id);
+	return parent ? `${parent}/${name}` : name;
+}
+
+/** Deletes a folder with its subfolders and messages. */
+export async function deleteEwsFolder(account: MailAccount, path: string): Promise<void> {
+	const [message] = await ewsCall(account, request.deleteFolder(await folderIdOf(account, path)));
+	check(message);
+	invalidateEwsFolders(account.id);
+}
+
 export async function inboxUnreadCount(account: MailAccount): Promise<number> {
 	const [message] = await ewsCall(account, request.inboxUnread());
 	const folder = child(child(check(message), 'Folders'), 'Folder');

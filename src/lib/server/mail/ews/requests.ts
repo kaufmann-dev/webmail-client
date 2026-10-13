@@ -79,12 +79,28 @@ export function inboxUnread(): string {
 	);
 }
 
-export function createFolder(name: string): string {
+/** Creates a mail folder below `parentId`, or at the top level of the mailbox. */
+export function createFolder(name: string, parentId?: string): string {
+	const parent = parentId ? folderId(parentId) : '<t:DistinguishedFolderId Id="msgfolderroot"/>';
 	return (
-		'<m:CreateFolder><m:ParentFolderId><t:DistinguishedFolderId Id="msgfolderroot"/></m:ParentFolderId>' +
+		`<m:CreateFolder><m:ParentFolderId>${parent}</m:ParentFolderId>` +
 		`<m:Folders><t:Folder><t:FolderClass>IPF.Note</t:FolderClass><t:DisplayName>${escapeXml(name)}</t:DisplayName></t:Folder></m:Folders>` +
 		'</m:CreateFolder>'
 	);
+}
+
+export function renameFolder(id: string, name: string): string {
+	return (
+		`<m:UpdateFolder><m:FolderChanges><t:FolderChange>${folderId(id)}<t:Updates>` +
+		'<t:SetFolderField><t:FieldURI FieldURI="folder:DisplayName"/>' +
+		`<t:Folder><t:DisplayName>${escapeXml(name)}</t:DisplayName></t:Folder></t:SetFolderField>` +
+		'</t:Updates></t:FolderChange></m:FolderChanges></m:UpdateFolder>'
+	);
+}
+
+/** Deletes a folder with its subfolders and items, bypassing Deleted Items. */
+export function deleteFolder(id: string): string {
+	return `<m:DeleteFolder DeleteType="HardDelete"><m:FolderIds>${folderId(id)}</m:FolderIds></m:DeleteFolder>`;
 }
 
 function compare(operator: string, field: string, value: string): string {

@@ -1,8 +1,10 @@
 import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import { INVITATION_RESPONSES, type MessageDetail } from '#lib/mail-types.js';
+import { getAccount } from '#lib/server/mail/accounts.js';
 import { respondToInvitation } from '#lib/server/mail/compose.js';
 import { errorMessage, MailError } from '#lib/server/mail/errors.js';
+import { createFolder, deleteFolder, renameFolder } from '#lib/server/mail/folders.js';
 import { InvalidMessageRefError } from '#lib/server/mail/message-ref.js';
 import {
 	deleteMessages,
@@ -58,6 +60,17 @@ async function run(fn: () => Promise<void>) {
 	}
 }
 
+/** The account and fields of a folder action; `path` is the parent when creating. */
+async function folderFields(request: Request, userId: string) {
+	const form = await request.formData();
+	const field = (name: string) => String(form.get(name) ?? '');
+	return {
+		account: await getAccount(userId, field('account')),
+		path: field('path'),
+		name: field('name')
+	};
+}
+
 const MOVE_TARGETS = ['archive', 'trash', 'spam', 'inbox'] as const;
 
 export const actions: Actions = {
@@ -90,5 +103,20 @@ export const actions: Actions = {
 			const { form, refs } = await refsFrom(request);
 			const response = z.enum(INVITATION_RESPONSES).parse(form.get('response'));
 			await respondToInvitation(locals.user.id, refs[0], response);
+		}),
+	createFolder: ({ request, locals }) =>
+		run(async () => {
+			const { account, path, name } = await folderFields(request, locals.user.id);
+			await createFolder(account, path || null, name);
+		}),
+	renameFolder: ({ request, locals }) =>
+		run(async () => {
+			const { account, path, name } = await folderFields(request, locals.user.id);
+			await renameFolder(account, path, name);
+		}),
+	deleteFolder: ({ request, locals }) =>
+		run(async () => {
+			const { account, path } = await folderFields(request, locals.user.id);
+			await deleteFolder(account, path);
 		})
 };

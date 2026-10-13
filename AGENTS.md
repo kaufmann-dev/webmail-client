@@ -38,6 +38,9 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
 - All IMAP/SMTP and Exchange access goes through `src/lib/server/mail/`. Routes and MCP tools never
   talk to `imapflow`, `nodemailer`, or Exchange directly. The public functions in `messages.ts`,
   `folders.ts`, `compose.ts`, and `accounts.ts` branch on `provider === 'exchange'`.
+  - `folders.ts`: listing (cached) and creating, renaming, and deleting folders. Role folders
+    cannot be renamed or deleted; deleting is permanent and includes subfolders (IMAP deletes them
+    deepest first, Exchange uses `HardDelete`).
   - `imap.ts`: the per-account connection pool (`withClient`, `withMailbox`). Account failures are
     recorded in `mail_account.last_error` through `account-status.ts`.
   - `ews/`: Exchange accounts over Exchange Web Services (SOAP, Basic authentication, the account's
