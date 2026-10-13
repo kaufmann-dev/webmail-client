@@ -7,16 +7,41 @@ const full = new Intl.DateTimeFormat(undefined, {
 	month: 'short',
 	year: 'numeric'
 });
+const monthName = new Intl.DateTimeFormat(undefined, { month: 'long' });
+const monthYear = new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' });
 const long = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 const eventDay = new Intl.DateTimeFormat(undefined, { dateStyle: 'full' });
 const eventTime = new Intl.DateTimeFormat(undefined, { dateStyle: 'full', timeStyle: 'short' });
 
-/** Compact list date: time today, day and month this year, full date otherwise. */
+/** Local midnight of `date`, moved by `offset` days. */
+function midnight(date: Date, offset = 0): Date {
+	return new Date(date.getFullYear(), date.getMonth(), date.getDate() + offset);
+}
+
+/**
+ * Compact list date: time today and yesterday (the list's date group names the day), day and
+ * month this year, full date otherwise.
+ */
 export function listDate(iso: string, now = new Date()): string {
 	const date = new Date(iso);
-	if (date.toDateString() === now.toDateString()) return time.format(date);
+	if (date >= midnight(now, -1)) return time.format(date);
 	if (date.getFullYear() === now.getFullYear()) return dayMonth.format(date);
 	return full.format(date);
+}
+
+/**
+ * The list section a message falls in: Today, Yesterday, This week, Last week (weeks start on
+ * Monday), then the month, with the year before this one.
+ */
+export function dateGroup(iso: string, now = new Date()): string {
+	const date = new Date(iso);
+	const today = midnight(now);
+	if (date >= today) return 'Today';
+	if (date >= midnight(now, -1)) return 'Yesterday';
+	const monday = midnight(now, -((now.getDay() + 6) % 7));
+	if (date >= monday) return 'This week';
+	if (date >= midnight(monday, -7)) return 'Last week';
+	return date.getFullYear() === now.getFullYear() ? monthName.format(date) : monthYear.format(date);
 }
 
 export function longDate(iso: string): string {

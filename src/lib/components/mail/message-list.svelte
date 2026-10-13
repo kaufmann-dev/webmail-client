@@ -4,7 +4,7 @@
 	import Star from '@lucide/svelte/icons/star';
 	import AccountSwatch from '#lib/components/account-swatch.svelte';
 	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
-	import { listDate, senderName } from '#lib/format.js';
+	import { dateGroup, listDate, senderName } from '#lib/format.js';
 	import type { AccountSummary, MessageSummary } from '#lib/mail-types.js';
 
 	let {
@@ -32,6 +32,19 @@
 		ondragstart: (refs: string[]) => void;
 		ondragend: () => void;
 	} = $props();
+
+	/** Consecutive messages under one date label, in list order. */
+	const groups = $derived.by(() => {
+		const now = new Date();
+		const result: { label: string; messages: MessageSummary[] }[] = [];
+		for (const message of messages) {
+			const label = dateGroup(message.date, now);
+			const last = result.at(-1);
+			if (last?.label === label) last.messages.push(message);
+			else result.push({ label, messages: [message] });
+		}
+		return result;
+	});
 
 	let dragLabel = $state<HTMLElement | null>(null);
 	let dragCount = $state(0);
@@ -83,83 +96,101 @@
 	}
 </script>
 
-<ul class="divide-y" aria-label="Messages">
-	{#each messages as message (message.ref)}
-		{@const account = accounts.get(message.accountId)}
-		{@const open = message.ref === openRef}
-		{@const unread = message.unread && !open}
-		<li
-			class={['flex items-stretch', open ? 'bg-accent' : 'hover:bg-accent/50']}
-			draggable="true"
-			ondragstart={(event) => startDrag(event, message)}
-			{ondragend}
-		>
-			<div
-				class="flex items-start pt-3 pl-3"
-				onclickcapture={(event) => (shiftHeld = event.shiftKey)}
-				role="presentation"
+<div role="region" aria-label="Messages">
+	{#each groups as group, index (group.messages[0].ref)}
+		<section aria-labelledby="date-group-{index}" class="border-t first:border-t-0">
+			<h2
+				id="date-group-{index}"
+				class="sticky top-0 z-10 border-b bg-background px-3 py-1 text-xs font-medium text-muted-foreground"
 			>
-				<Checkbox
-					checked={selected.has(message.ref)}
-					onCheckedChange={(checked) => select(message.ref, checked === true, shiftHeld)}
-					aria-label="Select message: {message.subject || '(no subject)'}"
-				/>
-			</div>
-			<a
-				href={hrefFor(message)}
-				class="flex min-w-0 flex-1 flex-col gap-0.5 px-3 py-2"
-				aria-current={open ? 'true' : undefined}
-				data-ref={message.ref}
-				draggable="false"
-				onclick={(event) => onrowclick(event, message.ref)}
-				onmousedown={(event) => {
-					// Keeps Shift-click from selecting text.
-					if (event.shiftKey) event.preventDefault();
-				}}
-			>
-				<div class="flex min-w-0 items-center gap-2">
-					{#if unread}
-						<span class="size-2 shrink-0 rounded-full bg-foreground" aria-hidden="true"></span>
-						<span class="sr-only">Unread.</span>
-					{/if}
-					<span class={['min-w-0 flex-1 truncate text-sm', unread && 'font-semibold']}>
-						{counterpart(message)}
-					</span>
-					{#if message.hasAttachments}
-						<Paperclip
-							class="size-3.5 shrink-0 text-muted-foreground"
-							aria-label="Has attachments"
-						/>
-					{/if}
-					{#if message.starred}
-						<Star class="size-3.5 shrink-0 fill-current" aria-label="Starred" />
-					{/if}
-					<time datetime={message.date} class="tabular shrink-0 text-xs text-muted-foreground">
-						{listDate(message.date)}
-					</time>
-				</div>
-				<div class="flex min-w-0 items-center gap-2">
-					<span
-						class={[
-							'min-w-0 flex-1 truncate text-sm',
-							unread ? 'font-medium' : 'text-muted-foreground'
-						]}
+				{group.label}
+			</h2>
+			<ul class="divide-y">
+				{#each group.messages as message (message.ref)}
+					{@const account = accounts.get(message.accountId)}
+					{@const open = message.ref === openRef}
+					{@const unread = message.unread && !open}
+					<li
+						class={['flex items-stretch', open ? 'bg-accent' : 'hover:bg-accent/50']}
+						draggable="true"
+						ondragstart={(event) => startDrag(event, message)}
+						{ondragend}
 					>
-						{#if message.draft}<span class="text-destructive"
-								>Draft ·
-							</span>{/if}{message.subject || '(no subject)'}
-					</span>
-					{#if showAccount && account}
-						<span class="flex max-w-32 shrink-0 items-center gap-1 text-xs text-muted-foreground">
-							<AccountSwatch color={account.color} />
-							<span class="truncate">{account.label}</span>
-						</span>
-					{/if}
-				</div>
-			</a>
-		</li>
+						<div
+							class="flex items-start pt-3 pl-3"
+							onclickcapture={(event) => (shiftHeld = event.shiftKey)}
+							role="presentation"
+						>
+							<Checkbox
+								checked={selected.has(message.ref)}
+								onCheckedChange={(checked) => select(message.ref, checked === true, shiftHeld)}
+								aria-label="Select message: {message.subject || '(no subject)'}"
+							/>
+						</div>
+						<a
+							href={hrefFor(message)}
+							class="flex min-w-0 flex-1 flex-col gap-0.5 px-3 py-2"
+							aria-current={open ? 'true' : undefined}
+							data-ref={message.ref}
+							draggable="false"
+							onclick={(event) => onrowclick(event, message.ref)}
+							onmousedown={(event) => {
+								// Keeps Shift-click from selecting text.
+								if (event.shiftKey) event.preventDefault();
+							}}
+						>
+							<div class="flex min-w-0 items-center gap-2">
+								{#if unread}
+									<span class="size-2 shrink-0 rounded-full bg-foreground" aria-hidden="true"
+									></span>
+									<span class="sr-only">Unread.</span>
+								{/if}
+								<span class={['min-w-0 flex-1 truncate text-sm', unread && 'font-semibold']}>
+									{counterpart(message)}
+								</span>
+								{#if message.hasAttachments}
+									<Paperclip
+										class="size-3.5 shrink-0 text-muted-foreground"
+										aria-label="Has attachments"
+									/>
+								{/if}
+								{#if message.starred}
+									<Star class="size-3.5 shrink-0 fill-current" aria-label="Starred" />
+								{/if}
+								<time
+									datetime={message.date}
+									class="tabular shrink-0 text-xs text-muted-foreground"
+								>
+									{listDate(message.date)}
+								</time>
+							</div>
+							<div class="flex min-w-0 items-center gap-2">
+								<span
+									class={[
+										'min-w-0 flex-1 truncate text-sm',
+										unread ? 'font-medium' : 'text-muted-foreground'
+									]}
+								>
+									{#if message.draft}<span class="text-destructive"
+											>Draft ·
+										</span>{/if}{message.subject || '(no subject)'}
+								</span>
+								{#if showAccount && account}
+									<span
+										class="flex max-w-32 shrink-0 items-center gap-1 text-xs text-muted-foreground"
+									>
+										<AccountSwatch color={account.color} />
+										<span class="truncate">{account.label}</span>
+									</span>
+								{/if}
+							</div>
+						</a>
+					</li>
+				{/each}
+			</ul>
+		</section>
 	{/each}
-</ul>
+</div>
 
 <!-- Drag image for several messages; off screen but rendered, as browsers require. -->
 <div
