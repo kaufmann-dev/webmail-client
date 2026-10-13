@@ -19,7 +19,7 @@ import { getAccount } from './accounts';
 import { bodyText, previewOf } from './body-text';
 import { errorMessage, MailError } from './errors';
 import * as ews from './ews/messages';
-import { ensureArchiveFolder, requireFolder, resolveFolder } from './folders';
+import { ensureArchiveFolder, getFolders, requireFolder, resolveFolder } from './folders';
 import { withMailbox } from './imap';
 import { findCalendarPart, isCalendarPart, parseInvitation } from './invitations';
 import { decodeCursor, encodeCursor, mergePages, trimPage, type AccountPage } from './merge';
@@ -1003,24 +1003,18 @@ export async function messagePreviews(
 	return previews;
 }
 
-/** Folders searched for a message that moved elsewhere, after its last known one. */
-const FIND_ROLES = ['inbox', 'archive', 'sent', 'drafts', 'trash', 'spam'] as const;
-
 /**
  * Finds a message by its Message-ID header after it moved without this app (in another mail
- * program, or by a server rule): its last folder first, then the standard folders. Null when it
- * is in none of them.
+ * program, or by a server rule): its last folder first, then the role folders, then every other
+ * folder. Null when it is in none of them.
  */
 export async function findMessage(
 	account: MailAccount,
 	messageId: string,
 	lastPath: string
 ): Promise<string | null> {
-	const paths = [lastPath];
-	for (const role of FIND_ROLES) {
-		const path = await resolveFolder(account, role).catch(() => null);
-		if (path && !paths.includes(path)) paths.push(path);
-	}
+	const folders = await getFolders(account);
+	const paths = [lastPath, ...folders.map((f) => f.path).filter((path) => path !== lastPath)];
 	for (const path of paths) {
 		if (account.provider === 'exchange') {
 			const itemId = await ews.findByMessageId(account, path, messageId).catch(() => null);
