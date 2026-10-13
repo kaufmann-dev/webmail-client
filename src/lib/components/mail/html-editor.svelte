@@ -450,7 +450,7 @@ a{color:#1a56c4}`;
 		{srcdoc}
 		{@attach editor}
 		{@attach showFont}
-		class="block w-full bg-white"
+		class="block w-full bg-white scheme-light"
 		style:height="{minHeight}px"
 	></iframe>
 </div>
