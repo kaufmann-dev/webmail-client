@@ -101,7 +101,7 @@
 		<section aria-labelledby="date-group-{index}" class="border-t first:border-t-0">
 			<h2
 				id="date-group-{index}"
-				class="sticky top-0 z-10 border-b bg-background px-3 py-1 text-xs font-medium text-muted-foreground"
+				class="sticky top-0 z-10 border-b bg-list-group px-3 py-1.5 text-sm font-semibold"
 			>
 				{group.label}
 			</h2>
