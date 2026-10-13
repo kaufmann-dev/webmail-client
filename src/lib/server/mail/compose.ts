@@ -7,7 +7,7 @@ import { mailAuth } from './credentials';
 import { errorMessage, MailError } from './errors';
 import { requireFolder, resolveFolder } from './folders';
 import * as ews from './ews/compose';
-import { outgoingHtml, plainTextOf, textToComposeHtml } from './html-body';
+import { embedDataImages, outgoingHtml, plainTextOf, textToComposeHtml } from './html-body';
 import { withClient, withMailbox } from './imap';
 import { invitationReply } from './invitations';
 import { encodeMessageRef } from './message-ref';
@@ -161,8 +161,12 @@ export async function loadDraft(userId: string, ref: string): Promise<Draft> {
 	};
 }
 
+function mailDomain(account: MailAccount): string {
+	return account.email.split('@')[1] ?? 'localhost';
+}
+
 function newMessageId(account: MailAccount): string {
-	return `<${randomUUID()}@${account.email.split('@')[1] ?? 'localhost'}>`;
+	return `<${randomUUID()}@${mailDomain(account)}>`;
 }
 
 async function buildRaw(
@@ -170,19 +174,18 @@ async function buildRaw(
 	draft: Draft,
 	headers: { messageId: string; date: Date; keepBcc: boolean }
 ): Promise<Buffer> {
+	const { html, images } = embedDataImages(draft.html, mailDomain(account));
 	const composer = new MailComposer({
 		from: { name: account.displayName, address: account.email },
 		to: draft.to,
 		cc: draft.cc,
 		bcc: draft.bcc,
 		subject: draft.subject,
-		html: outgoingHtml(draft.html, toSummary(account).font),
+		html: outgoingHtml(html, toSummary(account).font),
 		text: plainTextOf(draft.html),
-		// Pasted images, signature images, and quoted inline images go out as embedded parts.
-		attachDataUrls: true,
 		inReplyTo: draft.inReplyTo ?? undefined,
 		references: draft.references.length ? draft.references : undefined,
-		attachments: draft.attachments,
+		attachments: [...draft.attachments, ...images],
 		icalEvent: draft.calendar,
 		messageId: headers.messageId,
 		date: headers.date

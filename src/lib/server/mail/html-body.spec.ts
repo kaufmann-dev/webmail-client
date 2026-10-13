@@ -1,5 +1,12 @@
+import MailComposer from 'nodemailer/lib/mail-composer';
 import { describe, expect, it } from 'vitest';
-import { outgoingHtml, plainTextOf, signatureOrNull, textToComposeHtml } from './html-body';
+import {
+	embedDataImages,
+	outgoingHtml,
+	plainTextOf,
+	signatureOrNull,
+	textToComposeHtml
+} from './html-body';
 
 describe('textToComposeHtml', () => {
 	it('puts each line in a div, escapes text, and links addresses', () => {
@@ -23,6 +30,40 @@ describe('outgoingHtml', () => {
 		expect(outgoingHtml('<div>Hi</div>', null)).toBe(
 			'<!doctype html><html><head><meta charset="utf-8"></head><body><div>Hi</div></body></html>'
 		);
+	});
+});
+
+describe('embedDataImages', () => {
+	const png = 'iVBORw0KGgo=';
+
+	it('turns data images into cid parts, one per distinct image', () => {
+		const { html, images } = embedDataImages(
+			`<img width="600" src="data:image/png;base64,${png}"><p>x</p>` +
+				`<img src='data:image/png;base64,${png}'><img src="data:image/svg+xml;base64,PHN2Zy8+">` +
+				'<img src="https://example.org/a.png">',
+			'example.com'
+		);
+		expect(images.map((i) => [i.filename, i.contentType])).toEqual([
+			['image-1.png', 'image/png'],
+			['image-2.svg', 'image/svg+xml']
+		]);
+		expect(images[0].content).toEqual(Buffer.from(png, 'base64'));
+		expect(images[0].cid).toMatch(/@example\.com$/);
+		expect(html).toBe(
+			`<img width="600" src="cid:${images[0].cid}"><p>x</p>` +
+				`<img src='cid:${images[0].cid}'><img src="cid:${images[1].cid}">` +
+				'<img src="https://example.org/a.png">'
+		);
+	});
+
+	it('yields MIME with an inline image part and no data URI', async () => {
+		const { html, images } = embedDataImages(`<img src="data:image/png;base64,${png}">`, 'b.c');
+		const mime = (
+			await new MailComposer({ from: 'a@b.c', html, attachments: images }).compile().build()
+		).toString();
+		expect(mime).toContain(`Content-ID: <${images[0].cid}>`);
+		expect(mime).toContain('Content-Disposition: inline');
+		expect(mime).not.toContain('data:image');
 	});
 });
 
