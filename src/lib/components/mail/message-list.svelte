@@ -46,19 +46,21 @@
 		return result;
 	});
 
-	let dragLabel = $state<HTMLElement | null>(null);
-	let dragCount = $state(0);
+	let dragImage = $state<HTMLElement | null>(null);
+	let dragText = $state('');
 
 	function startDrag(event: DragEvent, message: MessageSummary) {
 		const refs = selected.has(message.ref) ? [...selected] : [message.ref];
+		const subject = message.subject || '(no subject)';
 		if (event.dataTransfer) {
 			event.dataTransfer.effectAllowed = 'move';
-			event.dataTransfer.setData('text/plain', message.subject || '(no subject)');
-			if (refs.length > 1 && dragLabel) {
-				dragCount = refs.length;
-				// The drag image is captured now, so the label must already show the count.
+			event.dataTransfer.setData('text/plain', subject);
+			if (dragImage) {
+				dragText = refs.length > 1 ? `${refs.length} messages` : subject;
+				// The drag image is captured now, so the label must already show its text.
 				flushSync();
-				event.dataTransfer.setDragImage(dragLabel, 0, 0);
+				// A small label below the pointer instead of the whole row, which hides the folders.
+				event.dataTransfer.setDragImage(dragImage, 0, 0);
 			}
 		}
 		ondragstart(refs);
@@ -197,11 +199,10 @@
 	{/each}
 </div>
 
-<!-- Drag image for several messages; off screen but rendered, as browsers require. -->
-<div
-	bind:this={dragLabel}
-	class="fixed -top-96 left-0 rounded-md border bg-background px-2 py-1 text-sm"
-	aria-hidden="true"
->
-	{dragCount} messages
+<!-- Drag image, off screen but rendered, as browsers require. The transparent padding keeps the
+label clear of the pointer, so the folder under it stays visible. -->
+<div bind:this={dragImage} class="fixed -top-96 left-0 pt-5 pl-4" aria-hidden="true">
+	<div class="max-w-64 truncate rounded-md border bg-background px-2 py-1 text-sm">
+		{dragText}
+	</div>
 </div>
