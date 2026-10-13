@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { enhance, type ActionResult, type SubmitFunction } from '$app/forms';
-	import { beforeNavigate, goto, invalidate } from '$app/navigation';
+	import { afterNavigate, beforeNavigate, goto, invalidate } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { toast } from 'svelte-sonner';
@@ -51,15 +51,23 @@
 		initial.mode
 	];
 
+	// Going back is safe only to a page this document showed. Going back past the page load
+	// unloads the document, which cancels a send that is still uploading and drops its toast.
+	let openedInApp = false;
+	afterNavigate(({ from }) => (openedInApp = from !== null));
+
 	function leave() {
 		dirty = false;
-		if (history.length > 1) history.back();
-		else goto(resolve('/(app)/mail/[scope]/[...folder]', { scope: 'all', folder: 'inbox' }));
+		if (openedInApp) history.back();
+		else
+			goto(resolve('/(app)/mail/[scope]/[...folder]', { scope: 'all', folder: 'inbox' }), {
+				replace: true
+			});
 	}
 
 	/** Goes back to where the editor was opened from; unsaved changes ask first. */
 	function close() {
-		if (history.length > 1) history.back();
+		if (openedInApp) history.back();
 		else {
 			const folder = initial.mode === 'draft' ? 'drafts' : 'inbox';
 			const scope = initial.mode === 'draft' ? accountId : 'all';

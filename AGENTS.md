@@ -120,7 +120,8 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
   `shortcut` for a keyboard key), not `title`. They still need an `sr-only` or `aria-label` name.
 - User actions show their result at once and finish in the background (`postAction` in
   `src/lib/form-action.ts`); a failure undoes the change and shows a toast. Sending continues after
-  the editor closes (`src/lib/outbox.ts`).
+  the editor closes (`src/lib/outbox.ts`), so closing it never leaves the page load: going back past
+  it would unload the document and cancel the send.
 - The open message streams from the page load, which must stay free of side effects because links
   preload on hover. The page marks a message read once it is shown.
 - Every `overflow-y-auto` scroll area is also `relative`. Otherwise `sr-only` labels inside it
