@@ -199,7 +199,7 @@
 				</TooltipButton>
 			{/snippet}
 		</DropdownMenu.Trigger>
-		<DropdownMenu.Content align="start">
+		<DropdownMenu.Content align="start" class="w-max">
 			<DropdownMenu.Item onSelect={() => onfolder?.({ kind: 'create', accountId, parent: entry })}>
 				<FolderPlus />
 				New subfolder
