@@ -113,6 +113,10 @@
 	html {
 		@apply font-sans;
 	}
+	/* The folder search has its own Clear search button, which also resets the results. */
+	input[type='search']::-webkit-search-cancel-button {
+		appearance: none;
+	}
 }
 
 /* Flat, motionless surfaces. Base-layer !important outranks component utilities. */
