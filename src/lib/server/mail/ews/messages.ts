@@ -186,18 +186,23 @@ export async function readMessage(account: MailAccount, locator: EwsLocator): Pr
 			attachments.flatMap((a) => (a.contentId && a.name ? [[a.contentId, a.name] as const] : []))
 		)
 	});
-	const { html, embedded } = body
-		? await embedImages(account, body, attachments)
-		: { html: '', embedded: new Set<string>() };
+	const cc = mailboxes(child(node, 'CcRecipients'));
+	const bcc = mailboxes(child(node, 'BccRecipients'));
+	const replyTo = mailboxes(child(node, 'ReplyTo'));
+	// The follow-up requests depend only on the item, so they run together.
+	const [{ html, embedded }, calendar] = await Promise.all([
+		body ? embedImages(account, body, attachments) : { html: '', embedded: new Set<string>() },
+		text(node.ItemClass).startsWith('IPM.Schedule.Meeting')
+			? meetingCalendar(account, locator.itemId).catch(() => null)
+			: null,
+		resolveAddresses(account, [summary.from, ...summary.to, ...cc, ...bcc, ...replyTo])
+	]);
 	const sanitized = html ? sanitizeEmailHtml(html) : null;
-	const calendar = text(node.ItemClass).startsWith('IPM.Schedule.Meeting')
-		? await meetingCalendar(account, locator.itemId).catch(() => null)
-		: null;
 	const detail: MessageDetail = {
 		...summary,
-		cc: mailboxes(child(node, 'CcRecipients')),
-		bcc: mailboxes(child(node, 'BccRecipients')),
-		replyTo: mailboxes(child(node, 'ReplyTo')),
+		cc,
+		bcc,
+		replyTo,
 		inReplyTo: text(node.InReplyTo) || null,
 		references: text(node.References).split(/\s+/).filter(Boolean),
 		text: plain.text,
@@ -213,13 +218,6 @@ export async function readMessage(account: MailAccount, locator: EwsLocator): Pr
 			})),
 		invitation: calendar ? parseInvitation(calendar, account.email) : null
 	};
-	await resolveAddresses(account, [
-		detail.from,
-		...detail.to,
-		...detail.cc,
-		...detail.bcc,
-		...detail.replyTo
-	]);
 	return {
 		detail,
 		newText: plain.newText,
