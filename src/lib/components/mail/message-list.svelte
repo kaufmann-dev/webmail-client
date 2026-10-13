@@ -112,7 +112,7 @@
 					{@const unread = message.unread && !open}
 					<li
 						class={[
-							'flex items-stretch',
+							'flex items-stretch bg-clip-padding',
 							open
 								? 'relative bg-selected before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-primary'
 								: 'hover:bg-muted'
