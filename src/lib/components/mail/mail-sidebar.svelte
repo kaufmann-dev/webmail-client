@@ -139,7 +139,7 @@
 		const dropping = destination && accepts && sameDestination(dropTarget, destination);
 		return [
 			'flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-sm',
-			active ? 'bg-accent font-medium text-accent-foreground' : 'hover:bg-accent/60',
+			active ? 'bg-accent font-medium text-accent-foreground' : 'hover:bg-muted',
 			dropping && 'bg-accent outline-1 -outline-offset-1 outline-foreground outline-dashed'
 		];
 	}

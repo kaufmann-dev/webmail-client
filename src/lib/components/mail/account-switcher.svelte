@@ -93,7 +93,7 @@
 			<button
 				{...props}
 				type="button"
-				class="flex w-full min-w-0 items-center gap-2 rounded-md border px-2 py-1.5 text-left hover:bg-accent/60 aria-expanded:bg-accent"
+				class="flex w-full min-w-0 items-center gap-2 rounded-md border px-2 py-1.5 text-left hover:bg-muted aria-expanded:bg-accent"
 			>
 				{@render mark(current)}
 				<span

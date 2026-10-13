@@ -101,7 +101,7 @@
 		<section aria-labelledby="date-group-{index}">
 			<h2
 				id="date-group-{index}"
-				class="sticky top-0 z-10 bg-list-group px-3 py-1.5 text-xs font-semibold"
+				class="sticky top-0 z-10 bg-muted px-3 py-1.5 text-xs font-semibold"
 			>
 				{group.label}
 			</h2>
@@ -111,7 +111,7 @@
 					{@const open = message.ref === openRef}
 					{@const unread = message.unread && !open}
 					<li
-						class={['flex items-stretch', open ? 'bg-accent' : 'hover:bg-accent/50']}
+						class={['flex items-stretch', open ? 'bg-accent' : 'hover:bg-muted']}
 						draggable="true"
 						ondragstart={(event) => startDrag(event, message)}
 						{ondragend}
