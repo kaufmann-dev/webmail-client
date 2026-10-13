@@ -98,10 +98,10 @@
 
 <div role="region" aria-label="Messages">
 	{#each groups as group, index (group.messages[0].ref)}
-		<section aria-labelledby="date-group-{index}" class="border-t first:border-t-0">
+		<section aria-labelledby="date-group-{index}">
 			<h2
 				id="date-group-{index}"
-				class="sticky top-0 z-10 border-b bg-list-group px-3 py-1.5 text-sm font-semibold"
+				class="sticky top-0 z-10 bg-list-group px-3 py-1.5 text-sm font-semibold"
 			>
 				{group.label}
 			</h2>
