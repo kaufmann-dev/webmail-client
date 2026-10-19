@@ -5,6 +5,7 @@ import {
 	ewsLocator,
 	imapLocator,
 	InvalidMessageRefError,
+	renamedFolderRef,
 	type MessageLocator
 } from './message-ref';
 
@@ -51,5 +52,31 @@ describe('message refs', () => {
 		const imap = decodeMessageRef(Buffer.from('["a","INBOX","1",7]').toString('base64url'));
 		expect(imapLocator(imap).uid).toBe(7);
 		expect(() => ewsLocator(imap)).toThrow(InvalidMessageRefError);
+	});
+});
+
+describe('renamedFolderRef', () => {
+	const imap = (path: string) =>
+		encodeMessageRef({ kind: 'imap', accountId: 'a', path, uidValidity: '7', uid: 1 });
+
+	it('moves refs in the folder and its subfolders to the new path', () => {
+		expect(renamedFolderRef(imap('Work'), 'Work', 'Jobs', '/')).toBe(imap('Jobs'));
+		expect(renamedFolderRef(imap('Work/2026'), 'Work', 'Jobs', '/')).toBe(imap('Jobs/2026'));
+		expect(renamedFolderRef(imap('INBOX.Work.Old'), 'INBOX.Work', 'INBOX.Jobs', '.')).toBe(
+			imap('INBOX.Jobs.Old')
+		);
+		const ews = encodeMessageRef({ kind: 'ews', accountId: 'a', path: 'Inbox/A/B', itemId: 'X' });
+		expect(decodeMessageRef(renamedFolderRef(ews, 'Inbox/A', 'Inbox/C', '/')!)).toEqual({
+			kind: 'ews',
+			accountId: 'a',
+			path: 'Inbox/C/B',
+			itemId: 'X'
+		});
+	});
+
+	it('leaves other folders alone', () => {
+		expect(renamedFolderRef(imap('Work2'), 'Work', 'Jobs', '/')).toBeNull();
+		expect(renamedFolderRef(imap('INBOX'), 'Work', 'Jobs', '/')).toBeNull();
+		expect(renamedFolderRef(imap('Work/2026'), 'Work', 'Jobs', null)).toBeNull();
 	});
 });

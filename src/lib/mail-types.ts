@@ -36,7 +36,7 @@ export const ACCESS_LEVEL_LABELS: Record<AccessLevel, string> = {
 
 export const ACCESS_LEVEL_DESCRIPTIONS: Record<AccessLevel, string> = {
 	read: 'List, search, and read messages and attachments.',
-	organize: 'Also flag, move, archive, trash, and save drafts.',
+	organize: 'Also flag, move, archive, trash, save drafts, and manage folders.',
 	send: 'Also send replies, forwards, new messages, and invitation responses.'
 };
 

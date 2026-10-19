@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { and, eq, inArray } from 'drizzle-orm';
 import { db } from '../db';
 import { mcpMessageRef } from '../db/schema';
-import { InvalidMessageRefError } from '../mail/message-ref';
+import { InvalidMessageRefError, renamedFolderRef } from '../mail/message-ref';
 
 /** A short MCP ref and the message it stands for. */
 export interface RefRow {
@@ -18,6 +18,7 @@ export interface RefStore {
 	/** The short ref of each locator, created where missing. */
 	mint(userId: string, rows: Omit<RefRow, 'id'>[]): Promise<Map<string, string>>;
 	find(userId: string, ids: string[]): Promise<RefRow[]>;
+	forAccount(userId: string, accountId: string): Promise<RefRow[]>;
 	/** Points refs at the new locators of moved messages, by old locator. */
 	relocate(userId: string, moves: Map<string, string>): Promise<void>;
 }
@@ -29,6 +30,13 @@ const ID_LENGTH = 10;
 export function newRefId(): string {
 	return [...randomBytes(ID_LENGTH)].map((byte) => ALPHABET[byte % ALPHABET.length]).join('');
 }
+
+const REF_COLUMNS = {
+	id: mcpMessageRef.id,
+	accountId: mcpMessageRef.accountId,
+	locator: mcpMessageRef.locator,
+	messageId: mcpMessageRef.messageId
+};
 
 const dbStore: RefStore = {
 	async mint(userId, rows) {
@@ -47,14 +55,15 @@ const dbStore: RefStore = {
 	async find(userId, ids) {
 		if (!ids.length) return [];
 		return db
-			.select({
-				id: mcpMessageRef.id,
-				accountId: mcpMessageRef.accountId,
-				locator: mcpMessageRef.locator,
-				messageId: mcpMessageRef.messageId
-			})
+			.select(REF_COLUMNS)
 			.from(mcpMessageRef)
 			.where(and(eq(mcpMessageRef.userId, userId), inArray(mcpMessageRef.id, ids)));
+	},
+	async forAccount(userId, accountId) {
+		return db
+			.select(REF_COLUMNS)
+			.from(mcpMessageRef)
+			.where(and(eq(mcpMessageRef.userId, userId), eq(mcpMessageRef.accountId, accountId)));
 	},
 	async relocate(userId, moves) {
 		if (!moves.size) return;
@@ -119,5 +128,20 @@ export class McpRefs {
 
 	moved(moves: Map<string, string>): Promise<void> {
 		return this.store.relocate(this.userId, moves);
+	}
+
+	/** Points the refs of messages in a renamed folder and its subfolders at the new paths. */
+	async folderRenamed(
+		accountId: string,
+		from: string,
+		to: string,
+		delimiter: string | null
+	): Promise<void> {
+		const moves = new Map<string, string>();
+		for (const row of await this.store.forAccount(this.userId, accountId)) {
+			const renamed = renamedFolderRef(row.locator, from, to, delimiter);
+			if (renamed) moves.set(row.locator, renamed);
+		}
+		await this.moved(moves);
 	}
 }

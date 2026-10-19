@@ -73,3 +73,21 @@ export function ewsLocator(locator: MessageLocator): EwsLocator {
 	if (locator.kind !== 'ews') throw new InvalidMessageRefError();
 	return locator;
 }
+
+/**
+ * The ref of a message after its folder, or a folder above it, was renamed from `from` to `to`;
+ * null for a message elsewhere. `delimiter` separates subfolder paths (null: no hierarchy).
+ */
+export function renamedFolderRef(
+	ref: string,
+	from: string,
+	to: string,
+	delimiter: string | null
+): string | null {
+	const locator = decodeMessageRef(ref);
+	const inside =
+		locator.path === from || (delimiter !== null && locator.path.startsWith(from + delimiter));
+	return inside
+		? encodeMessageRef({ ...locator, path: to + locator.path.slice(from.length) })
+		: null;
+}

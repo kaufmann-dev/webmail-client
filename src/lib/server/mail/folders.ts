@@ -6,6 +6,7 @@ import {
 	createEwsFolder,
 	deleteEwsFolder,
 	ewsFolders,
+	ewsFolderTotal,
 	inboxUnreadCount,
 	invalidateEwsFolders,
 	renameEwsFolder
@@ -188,31 +189,62 @@ export async function createFolder(
 	return created.path;
 }
 
-/** Renames a folder in place and returns its new path. */
+/**
+ * Renames a folder in place. Returns its new path and the hierarchy delimiter, which separates
+ * the paths of its subfolders (they move along); null on a server without hierarchy.
+ */
 export async function renameFolder(
 	account: MailAccount,
 	path: string,
 	rawName: string
-): Promise<string> {
+): Promise<{ path: string; delimiter: string | null }> {
 	const name = folderName(rawName);
 	const parent = parentOf(await customFolder(account, path));
 	await requireFreeName(account, parent, name, path);
 	if (account.provider === 'exchange') return renameEwsFolder(account, path, parent, name);
-	const renamed = await withClient(account, (client) => {
-		requireNoDelimiter(name, client.namespace?.delimiter);
-		return client.mailboxRename(path, parent ? [parent, name] : name);
+	const renamed = await withClient(account, async (client) => {
+		const delimiter = client.namespace?.delimiter || null;
+		requireNoDelimiter(name, delimiter);
+		const result = await client.mailboxRename(path, parent ? [parent, name] : name);
+		return { path: result.newPath, delimiter };
 	});
 	invalidateFolders(account.id);
-	return renamed.newPath;
+	return renamed;
 }
 
-/** Deletes a folder with its subfolders and all their messages. */
-export async function deleteFolder(account: MailAccount, path: string): Promise<void> {
+function requireEmpty(path: string, count: number): void {
+	if (!count) return;
+	throw new MailError(
+		`"${path}" or its subfolders still hold ${count} message${count === 1 ? '' : 's'}. Move or trash them first.`,
+		409
+	);
+}
+
+/**
+ * Deletes a folder with its subfolders and all their messages. With `onlyEmpty`, a folder whose
+ * subtree still holds messages is refused instead.
+ */
+export async function deleteFolder(
+	account: MailAccount,
+	path: string,
+	options: { onlyEmpty?: boolean } = {}
+): Promise<void> {
 	await customFolder(account, path);
-	if (account.provider === 'exchange') return deleteEwsFolder(account, path);
+	if (account.provider === 'exchange') {
+		if (options.onlyEmpty) requireEmpty(path, await ewsFolderTotal(account, path));
+		return deleteEwsFolder(account, path);
+	}
 	await withClient(account, async (client) => {
-		const doomed = (await client.list())
-			.filter((entry) => entry.path === path || entry.path.startsWith(path + entry.delimiter))
+		const entries = (
+			await client.list(options.onlyEmpty ? { statusQuery: { messages: true } } : undefined)
+		).filter((entry) => entry.path === path || entry.path.startsWith(path + entry.delimiter));
+		if (options.onlyEmpty) {
+			requireEmpty(
+				path,
+				entries.reduce((sum, entry) => sum + (entry.status?.messages ?? 0), 0)
+			);
+		}
+		const doomed = entries
 			.map((entry) => entry.path)
 			// Subfolders first: servers refuse to delete a folder that still has children.
 			.sort((a, b) => b.length - a.length);

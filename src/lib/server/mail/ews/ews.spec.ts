@@ -247,6 +247,16 @@ describe('requests', () => {
 		);
 	});
 
+	it('counts the messages of a folder and its subfolders', () => {
+		expect(request.folderTotal('F1')).toContain(
+			'<t:FieldURI FieldURI="folder:TotalCount"/></t:AdditionalProperties></m:FolderShape>' +
+				'<m:FolderIds><t:FolderId Id="F1"/></m:FolderIds>'
+		);
+		const below = request.subfolderTotals('F1');
+		expect(below).toContain('<m:FindFolder Traversal="Deep">');
+		expect(below).toContain('<m:ParentFolderIds><t:FolderId Id="F1"/></m:ParentFolderIds>');
+	});
+
 	it('updates each item under its own element name', () => {
 		const xml = request.updateItems([
 			{ id: 'm1', type: 'MeetingRequest', fields: [request.setIsRead(true)] }

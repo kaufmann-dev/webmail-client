@@ -162,14 +162,28 @@ export async function renameEwsFolder(
 	path: string,
 	parent: string | null,
 	name: string
-): Promise<string> {
+): Promise<{ path: string; delimiter: string }> {
 	const [message] = await ewsCall(
 		account,
 		request.renameFolder(await folderIdOf(account, path), name)
 	);
 	checkFolder(message, name);
 	invalidateEwsFolders(account.id);
-	return parent ? `${parent}/${name}` : name;
+	return { path: parent ? `${parent}/${name}` : name, delimiter: '/' };
+}
+
+/** The number of messages in a folder and all its subfolders. */
+export async function ewsFolderTotal(account: MailAccount, path: string): Promise<number> {
+	const id = await folderIdOf(account, path);
+	const [[own], [below]] = await Promise.all([
+		ewsCall(account, request.folderTotal(id)),
+		ewsCall(account, request.subfolderTotals(id))
+	]);
+	const folders = [
+		child(child(check(own), 'Folders'), 'Folder'),
+		...list(child(child(check(below), 'RootFolder'), 'Folders')?.Folder)
+	];
+	return folders.reduce((sum, folder) => sum + (Number(text(folder?.TotalCount)) || 0), 0);
 }
 
 /** Deletes a folder with its subfolders and messages. */

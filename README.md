@@ -117,7 +117,7 @@ shows these steps with copyable commands for the deployed URL.
 
 - **Consent:** after you sign in with Pocket ID, the consent screen lists your mail accounts. For
   each one, choose No access, **Read only**, **Read & organize** (flags, moving, archiving, trash,
-  drafts), or **Full** (also sending).
+  drafts, folders), or **Full** (also sending).
 - **Limits:** per account, an app can also be held to messages received in the last 7, 30, or 90
   days, and attachments can be withheld. Older messages then do not appear in lists, searches, or
   conversations, and every tool refuses them. Without attachments, `get_message` leaves out the
@@ -143,6 +143,9 @@ shows these steps with copyable commands for the deployed URL.
 | `get_thread`            | Read             | The whole conversation with each message's new text, sent ones included           |
 | `get_attachment`        | Read             | An attachment as text, image, or base64 (up to 10 MB), if attachments are allowed |
 | `update_messages`       | Read & organize  | Mark read/unread, star, archive, trash, spam, or move                             |
+| `create_folder`         | Read & organize  | Create a folder at the top level or below another folder                          |
+| `rename_folder`         | Read & organize  | Rename a custom folder in place; message refs inside stay valid                   |
+| `delete_folder`         | Read & organize  | Delete an empty custom folder; refuses folders that still hold messages           |
 | `reply_to_message`      | Organize or Full | Threaded reply or reply-all with the quote; `mode` is `draft` (default) or `send` |
 | `forward_message`       | Organize or Full | Forward with the original headers, and attachments if allowed                     |
 | `compose_new_message`   | Organize or Full | New conversations only; rejects `Re:` subjects                                    |

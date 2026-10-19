@@ -21,7 +21,14 @@ import {
 import { parseAddressList } from '../mail/addresses';
 import { groupConversations, type Conversation } from '../mail/conversations';
 import { errorMessage, MailError } from '../mail/errors';
-import { getFolders, resolveFolder } from '../mail/folders';
+import {
+	createFolder,
+	deleteFolder,
+	getFolders,
+	renameFolder,
+	requireFolder,
+	resolveFolder
+} from '../mail/folders';
 import { decodeMessageRef, InvalidMessageRefError } from '../mail/message-ref';
 import {
 	conversationMembers,
@@ -287,7 +294,8 @@ export function createMcpServer(
 		{
 			title: 'List folders',
 			description:
-				"Lists an account's folders. Standard folders have a role (inbox, drafts, sent, archive, spam, trash) usable as the folder argument elsewhere.",
+				"Lists an account's folders. Standard folders have a role (inbox, drafts, sent, archive, spam, trash) usable as the folder argument elsewhere. " +
+				'create_folder, rename_folder, and delete_folder manage the others.',
 			inputSchema: z.object({ account: accountRef }),
 			annotations: { readOnlyHint: true }
 		},
@@ -298,6 +306,76 @@ export function createMcpServer(
 					role: f.role
 				}))
 			)
+	);
+
+	const folderPath = z.string().min(1).describe('A folder path from list_folders.');
+	const folderNameArg = z
+		.string()
+		.min(1)
+		.max(100)
+		.describe('The folder name alone, without "/" or the path of its parent.');
+
+	server.registerTool(
+		'create_folder',
+		{
+			title: 'Create folder',
+			description:
+				'Creates a folder at the top level of an account, or below parent. Returns its path.',
+			inputSchema: z.object({
+				account: accountRef,
+				name: folderNameArg,
+				parent: z
+					.string()
+					.min(1)
+					.optional()
+					.describe(
+						'A role (such as inbox) or folder path to create it in; omit for the top level.'
+					)
+			}),
+			annotations: { destructiveHint: false }
+		},
+		({ account: accountArg, name, parent }) =>
+			guard(async () => {
+				const account = access.require(accountArg, 'organize');
+				const parentPath = parent ? await requireFolder(account, parent) : null;
+				return { path: await createFolder(account, parentPath, name) };
+			})
+	);
+
+	server.registerTool(
+		'rename_folder',
+		{
+			title: 'Rename folder',
+			description:
+				'Renames a folder in place; its subfolders move along. Standard (role) folders cannot be renamed. ' +
+				'Returns the new path. message_refs of the messages inside stay valid.',
+			inputSchema: z.object({ account: accountRef, folder: folderPath, name: folderNameArg }),
+			annotations: { destructiveHint: false, idempotentHint: false }
+		},
+		({ account: accountArg, folder, name }) =>
+			guard(async () => {
+				const account = access.require(accountArg, 'organize');
+				const renamed = await renameFolder(account, folder, name);
+				await refs.folderRenamed(account.id, folder, renamed.path, renamed.delimiter);
+				return { path: renamed.path };
+			})
+	);
+
+	server.registerTool(
+		'delete_folder',
+		{
+			title: 'Delete folder',
+			description:
+				'Deletes an empty folder with its empty subfolders. Standard (role) folders cannot be deleted, and a ' +
+				'folder whose subtree still holds messages is refused: move or trash them with update_messages first.',
+			inputSchema: z.object({ account: accountRef, folder: folderPath }),
+			annotations: { destructiveHint: true }
+		},
+		({ account: accountArg, folder }) =>
+			guard(async () => {
+				await deleteFolder(access.require(accountArg, 'organize'), folder, { onlyEmpty: true });
+				return { status: 'ok' };
+			})
 	);
 
 	const folderArg = z

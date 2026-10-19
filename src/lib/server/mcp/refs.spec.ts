@@ -21,6 +21,9 @@ function memoryStore(): RefStore & { rows: (RefRow & { userId: string })[] } {
 		async find(userId, ids) {
 			return rows.filter((r) => r.userId === userId && ids.includes(r.id));
 		},
+		async forAccount(userId, accountId) {
+			return rows.filter((r) => r.userId === userId && r.accountId === accountId);
+		},
 		async relocate(userId, moves) {
 			for (const [from, to] of moves) {
 				const taken = rows.findIndex((r) => r.userId === userId && r.locator === to);
@@ -58,6 +61,22 @@ describe('McpRefs', () => {
 		);
 		await refs.moved(moved);
 		expect(decodeLocator((await refs.resolve(id)).locator)).toEqual(['acc', 'Archive', '99', 5]);
+	});
+
+	it('follows a renamed folder in the same account only', async () => {
+		const ref = (accountId: string, path: string) =>
+			encodeMessageRef({ kind: 'imap', accountId, path, uidValidity: '7', uid: 1 });
+		const refs = new McpRefs('u1', memoryStore());
+		const short = await refs.shorten([
+			{ ref: ref('acc', 'Work/Old'), accountId: 'acc', messageId: null },
+			{ ref: ref('acc', 'Work2'), accountId: 'acc', messageId: null },
+			{ ref: ref('other', 'Work'), accountId: 'other', messageId: null }
+		]);
+		await refs.folderRenamed('acc', 'Work', 'Jobs', '/');
+		const locator = async (r: string) => (await refs.resolve(short.get(r)!)).locator;
+		expect(await locator(ref('acc', 'Work/Old'))).toBe(ref('acc', 'Jobs/Old'));
+		expect(await locator(ref('acc', 'Work2'))).toBe(ref('acc', 'Work2'));
+		expect(await locator(ref('other', 'Work'))).toBe(ref('other', 'Work'));
 	});
 
 	it('scopes refs to their user and rejects unknown ones', async () => {

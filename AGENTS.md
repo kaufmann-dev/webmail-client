@@ -40,7 +40,8 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
   `folders.ts`, `compose.ts`, and `accounts.ts` branch on `provider === 'exchange'`.
   - `folders.ts`: listing (cached) and creating, renaming, and deleting folders. Role folders
     cannot be renamed or deleted; deleting is permanent and includes subfolders (IMAP deletes them
-    deepest first, Exchange uses `HardDelete`).
+    deepest first, Exchange uses `HardDelete`). With `onlyEmpty` (MCP), a folder whose subtree
+    still holds messages is refused.
   - `imap.ts`: the per-account connection pool (`withClient`, `withMailbox`). Account failures are
     recorded in `mail_account.last_error` through `account-status.ts`.
   - `ews/`: Exchange accounts over Exchange Web Services (SOAP, Basic authentication, the account's
@@ -109,6 +110,9 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
   - Lists pass `access.notBefore(accounts)` to `listMessages`, and threads pass through
     `access.visible`.
   - Without attachments, `get_message` leaves out the attachment list (file names included).
+  - Folder tools need `organize`. `delete_folder` deletes only empty folders, since a full delete
+    would also destroy messages outside the time window. `rename_folder` rewrites the short refs
+    of messages in the renamed subtree (`McpRefs.folderRenamed`).
 - Tool results are compact JSON that leave out defaults: boolean flags only when true, `account`
   only when results span several accounts, `to` in lists only when it is not just the account.
 - Sending tools default to `mode: 'draft'`, except `respond_to_invitation`, which always sends (a

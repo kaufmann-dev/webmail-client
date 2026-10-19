@@ -79,6 +79,25 @@ export function inboxUnread(): string {
 	);
 }
 
+/** The folder's own message count. */
+export function folderTotal(id: string): string {
+	return (
+		'<m:GetFolder><m:FolderShape><t:BaseShape>IdOnly</t:BaseShape>' +
+		fields(['folder:TotalCount']) +
+		`</m:FolderShape><m:FolderIds>${folderId(id)}</m:FolderIds></m:GetFolder>`
+	);
+}
+
+/** The message counts of all folders below the folder. */
+export function subfolderTotals(id: string): string {
+	return (
+		'<m:FindFolder Traversal="Deep"><m:FolderShape><t:BaseShape>IdOnly</t:BaseShape>' +
+		fields(['folder:TotalCount']) +
+		'</m:FolderShape><m:IndexedPageFolderView MaxEntriesReturned="1000" Offset="0" BasePoint="Beginning"/>' +
+		`<m:ParentFolderIds>${folderId(id)}</m:ParentFolderIds></m:FindFolder>`
+	);
+}
+
 /** Creates a mail folder below `parentId`, or at the top level of the mailbox. */
 export function createFolder(name: string, parentId?: string): string {
 	const parent = parentId ? folderId(parentId) : '<t:DistinguishedFolderId Id="msgfolderroot"/>';
