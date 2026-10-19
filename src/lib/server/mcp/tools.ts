@@ -19,6 +19,7 @@ import {
 	type OutgoingAttachment
 } from '../mail/compose';
 import { parseAddressList } from '../mail/addresses';
+import { findMeetingTimes } from '../mail/availability';
 import { groupConversations, type Conversation } from '../mail/conversations';
 import { errorMessage, MailError } from '../mail/errors';
 import {
@@ -48,6 +49,7 @@ import { baseSubject, composeBody, formatAddress, looksLikeReplySubject } from '
 import type { MailAccount } from '../mail/types';
 import { McpAccess, McpAccessError } from './access';
 import { McpRefs } from './refs';
+import { formatWallClock, isTimeZone, parseWallClock, zonedToUtc } from '../mail/time-zones';
 
 const INSTRUCTIONS = `Email server for the user's mail accounts (Gmail, Purelymail, Microsoft 365,
 Exchange). Only the accounts this connection was granted are visible; call list_accounts first.
@@ -78,7 +80,13 @@ send; drafts appear in the account's Drafts folder for the user to review, and s
 one later. Reading a message never marks it as read.
 
 Calendar invitations appear as "invitation" in get_message. Answer one with respond_to_invitation
-only when the user asked to; it sends the answer to the organizer immediately.`;
+only when the user asked to; it sends the answer to the organizer immediately.
+
+To plan a meeting, find_meeting_times (Exchange accounts only) returns the busy times of the user
+and the attendees and the times that suit everyone. create_meeting invites attendees; like the
+other sending tools it saves a draft unless the user asked to send. Exchange puts sent meetings in
+the user's calendar; other accounts send the invitation by email only, so the user adds the
+meeting to their own calendar.`;
 
 function json(value: unknown): CallToolResult {
 	return { content: [{ type: 'text', text: JSON.stringify(value) }] };
@@ -132,6 +140,7 @@ function invitationOut(invitation: Invitation) {
 		organizer: addressText(invitation.organizer),
 		recurring: invitation.recurring,
 		your_status: invitation.ownStatus,
+		...(invitation.organizedByYou && { organized_by_you: true }),
 		attendees: invitation.attendees.map((a) => ({ address: formatAddress(a), status: a.status }))
 	};
 }
@@ -143,6 +152,26 @@ const MAX_PARTICIPANTS = 10;
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 
 const messageRef = z.string().min(1).describe('A message_ref from a listing tool.');
+const timeZone = z
+	.string()
+	.refine(isTimeZone, 'Unknown time zone.')
+	.describe('IANA time zone of the given times, such as "Europe/Vienna".');
+const wallClock = z
+	.string()
+	.regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/)
+	.describe('Local date and time in time_zone, YYYY-MM-DDTHH:MM.');
+const date = z
+	.string()
+	.regex(/^\d{4}-\d{2}-\d{2}$/)
+	.describe('YYYY-MM-DD in time_zone.');
+const clockTime = z.string().regex(/^\d{2}:\d{2}$/);
+
+/** An ISO instant from a local date and time in a time zone. */
+function instantIn(value: string, zone: string): string {
+	const time = parseWallClock(value);
+	if (!time) throw new MailError(`Not a valid date and time: ${value}`, 400);
+	return new Date(zonedToUtc(time, zone)).toISOString();
+}
 const accountRef = z.string().min(1).describe('Account ID or email address from list_accounts.');
 const recipientList = z
 	.array(z.string().trim().min(3))
@@ -961,6 +990,130 @@ export function createMcpServer(
 					attachments: attachmentsFrom(attachments)
 				};
 				return deliver(draft, how);
+			})
+	);
+
+	server.registerTool(
+		'create_meeting',
+		{
+			title: 'Create meeting',
+			description:
+				'Invites attendees to a new meeting (not all-day, not recurring). The title is the subject and the ' +
+				'body its description. With mode "draft" the invitation waits in Drafts for the user; send_draft ' +
+				"sends it. Exchange accounts add sent meetings to the user's calendar and track the answers; " +
+				'other accounts only email the invitation.',
+			inputSchema: z.object({
+				account: accountRef,
+				required: recipientList.min(1).describe('Required attendees, as email addresses.'),
+				optional: recipientList.optional().describe('Optional attendees.'),
+				subject: z.string().min(1).max(998),
+				body: z
+					.string()
+					.describe('Plain text description; the account signature is added.')
+					.default(''),
+				start: wallClock,
+				end: wallClock,
+				time_zone: timeZone,
+				location: z.string().max(500).optional(),
+				mode
+			})
+		},
+		({
+			account: accountArg,
+			required,
+			optional,
+			subject,
+			body,
+			start,
+			end,
+			time_zone,
+			location,
+			mode: how
+		}) =>
+			guard(async () => {
+				const account = access.require(accountArg, how === 'send' ? 'send' : 'organize');
+				const draft: Draft = {
+					accountId: account.id,
+					to: parseAddressList(required),
+					cc: parseAddressList(optional ?? []),
+					bcc: [],
+					subject,
+					html: composeBody(textToComposeHtml(body), account.signature),
+					inReplyTo: null,
+					references: [],
+					attachments: [],
+					meeting: {
+						uid: '',
+						start: instantIn(start, time_zone),
+						end: instantIn(end, time_zone),
+						location: location?.trim() || null
+					}
+				};
+				if (Date.parse(draft.meeting!.end) <= Date.parse(draft.meeting!.start)) {
+					throw new MailError('The meeting must end after it starts.', 400);
+				}
+				return { ...(await deliver(draft, how)), start, end, time_zone };
+			})
+	);
+
+	server.registerTool(
+		'find_meeting_times',
+		{
+			title: 'Find meeting times',
+			description:
+				'Exchange accounts only. Returns the busy times of the user and the attendees between two days, and ' +
+				'the periods in working hours on weekdays when everyone with a known calendar is free for the ' +
+				'duration. Attendees outside the organization are usually listed as unknown.',
+			inputSchema: z.object({
+				account: accountRef,
+				attendees: recipientList.min(1).max(20),
+				date_from: date,
+				date_to: date.describe('Last day, inclusive; at most 14 days after date_from.'),
+				duration_minutes: z.number().int().min(5).max(480),
+				time_zone: timeZone,
+				workday_start: clockTime.default('08:00').describe('HH:MM in time_zone.'),
+				workday_end: clockTime.default('18:00').describe('HH:MM in time_zone.')
+			})
+		},
+		({
+			account: accountArg,
+			attendees,
+			date_from,
+			date_to,
+			duration_minutes,
+			time_zone,
+			workday_start,
+			workday_end
+		}) =>
+			guard(async () => {
+				const account = access.require(accountArg, 'read');
+				const times = await findMeetingTimes(account, {
+					attendees: parseAddressList(attendees).map((a) => a.address),
+					from: date_from,
+					to: date_to,
+					durationMinutes: duration_minutes,
+					timeZone: time_zone,
+					workday: { start: workday_start, end: workday_end }
+				});
+				const local = (range: { start: string; end: string }) => ({
+					start: formatWallClock(Date.parse(range.start), time_zone),
+					end: formatWallClock(Date.parse(range.end), time_zone)
+				});
+				const own = account.email.toLowerCase();
+				const unknown = times.attendees.filter((a) => !a.busy).map((a) => a.address);
+				return {
+					time_zone,
+					free: times.free.map(local),
+					busy: Object.fromEntries(
+						times.attendees
+							.filter((a) => a.busy)
+							.map((a) => [
+								a.address.toLowerCase() === own ? 'you' : a.address,
+								a.busy!.map((b) => ({ ...local(b), ...(b.tentative && { tentative: true }) }))
+							])
+					),
+					...(unknown.length && { unknown })
+				};
 			})
 	);
 

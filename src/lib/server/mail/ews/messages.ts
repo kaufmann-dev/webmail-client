@@ -2,7 +2,7 @@ import { simpleParser } from 'mailparser';
 import type { Address, MessageDetail, MessageSummary } from '../../../mail-types';
 import { bodyText, previewOfCollapsed } from '../body-text';
 import { MailError } from '../errors';
-import { findCalendarPart, parseInvitation } from '../invitations';
+import { findCalendarPart, isCalendarPart, parseInvitation } from '../invitations';
 import type { AccountPage } from '../merge';
 import type { EwsLocator } from '../message-ref';
 import type { MessageFilters, ReadMessage } from '../messages';
@@ -156,7 +156,7 @@ async function embedImages(
 	return { html, embedded };
 }
 
-/** The iCalendar text of a meeting message, from its MIME form. */
+/** The iCalendar text of a message, from its MIME form. */
 async function meetingCalendar(account: MailAccount, id: string): Promise<string | null> {
 	const [message] = await ewsCall(account, request.getItems([id], [], { mime: true }));
 	const item = firstItem(check(message));
@@ -192,7 +192,9 @@ export async function readMessage(account: MailAccount, locator: EwsLocator): Pr
 	// The follow-up requests depend only on the item, so they run together.
 	const [{ html, embedded }, calendar] = await Promise.all([
 		body ? embedImages(account, body, attachments) : { html: '', embedded: new Set<string>() },
-		text(node.ItemClass).startsWith('IPM.Schedule.Meeting')
+		// Meeting messages, and messages saved with a calendar part (the user's meeting drafts, which
+		// Exchange may keep as ordinary messages with the part as an attachment).
+		text(node.ItemClass).startsWith('IPM.Schedule.Meeting') || attachments.some(isCalendarPart)
 			? meetingCalendar(account, locator.itemId).catch(() => null)
 			: null,
 		resolveAddresses(account, [summary.from, ...summary.to, ...cc, ...bcc, ...replyTo])

@@ -150,11 +150,39 @@ export interface Invitation {
 	end: string | null;
 	allDay: boolean;
 	location: string | null;
+	uid: string | null;
 	organizer: Address | null;
 	recurring: boolean;
 	attendees: Attendee[];
 	/** The receiving account's own status when it is listed as an attendee. */
 	ownStatus: AttendeeStatus | null;
+	/** The account itself organizes the event (its own drafts and sent invitations). */
+	organizedByYou: boolean;
+}
+
+export interface BusyTime {
+	/** ISO instants. */
+	start: string;
+	end: string;
+	tentative: boolean;
+}
+
+export interface MailboxAvailability {
+	address: string;
+	/** Null when Exchange has no information, as for addresses outside the organization. */
+	busy: BusyTime[] | null;
+}
+
+/** A period of time, as ISO instants. */
+export interface TimeRange {
+	start: string;
+	end: string;
+}
+
+/** Busy times of the organizer and attendees (Exchange), and the free times that suit all. */
+export interface MeetingTimes {
+	attendees: MailboxAvailability[];
+	free: TimeRange[];
 }
 
 export interface MessageDetail extends MessageSummary {
@@ -199,4 +227,13 @@ export interface ComposeState {
 	carriedRef: string;
 	carried: AttachmentInfo[];
 	mode: 'new' | 'reply' | 'forward' | 'draft';
+	/** Set when the message is a meeting invitation (new messages and drafts only). */
+	meeting: ComposeMeeting | null;
+}
+
+export interface ComposeMeeting {
+	/** ISO instants; the form shows them in the browser's time zone. */
+	start: string;
+	end: string;
+	location: string;
 }

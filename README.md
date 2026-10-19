@@ -22,6 +22,11 @@ and on the consent screen you choose which mail accounts each app may use and at
 - **Invitations:** calendar invitations show their time, place, and organizer. Accept, Maybe, and
   Decline send the standard calendar reply to the organizer. The provider's own calendar does not
   learn the answer, except on Exchange, which answers its own meeting requests.
+- **Meetings:** the Meeting button in the editor turns a new message or draft into an invitation
+  with date, start, end, and location (To are required, Cc optional attendees). Meeting drafts
+  reopen as meetings. Exchange accounts create the meeting in the calendar and track the answers,
+  and "Find a time" shows the attendees' busy times and the free times of the day. Other accounts
+  email the standard invitation; the meeting then does not enter your own calendar.
 - **Writing:** HTML mail in an editor with bold, italic, underline, text color, lists, links, and
   images; reply, reply all, forward (attachments included), drafts, and attachments. Quoted and
   forwarded messages keep their layout and stay editable. Each account has a formatted signature
@@ -123,6 +128,8 @@ shows these steps with copyable commands for the deployed URL.
   conversations, and every tool refuses them. Without attachments, `get_message` leaves out the
   attachment list, `get_attachment` is refused, and `forward_message` only forwards without
   attachments. The server enforces both on every tool call.
+- **Meetings:** `create_meeting` invites attendees (a draft unless sending was asked for), and
+  `find_meeting_times` finds times that suit everyone on Exchange accounts.
 - **Changing access:** Settings → Connected apps edits these choices at any time. Changes take effect
   on the app's next request. Revoking an app deletes its consent, grants, and refresh tokens.
 - **Tokens:** access tokens are 15-minute JWTs bound to `/mcp`, with rotating refresh tokens. The

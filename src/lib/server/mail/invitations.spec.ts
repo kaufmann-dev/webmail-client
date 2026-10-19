@@ -1,7 +1,7 @@
 import ICAL from 'ical.js';
 import { describe, expect, it } from 'vitest';
 import { MailError } from './errors';
-import { findCalendarPart, invitationReply, parseInvitation } from './invitations';
+import { findCalendarPart, invitationReply, meetingRequest, parseInvitation } from './invitations';
 
 const ics = (...lines: string[]) => lines.join('\r\n');
 
@@ -84,13 +84,15 @@ describe('parseInvitation', () => {
 			end: '2026-10-06T09:00:00.000Z',
 			allDay: false,
 			location: 'Room 4',
+			uid: 'abc123@google.com',
 			organizer: { name: 'Alex Organizer', address: 'alex@example.com' },
 			recurring: true,
 			attendees: [
 				{ name: 'Alex Organizer', address: 'alex@example.com', status: 'accepted' },
 				{ name: 'me@example.org', address: 'Me@Example.org', status: 'needs-action' }
 			],
-			ownStatus: 'needs-action'
+			ownStatus: 'needs-action',
+			organizedByYou: false
 		});
 	});
 
@@ -194,6 +196,56 @@ describe('invitationReply', () => {
 		expect(() => invitationReply(cancelled, me, 'declined')).toThrow(MailError);
 		const anonymous = calendar('REQUEST', 'DTSTART:20261006T080000Z');
 		expect(() => invitationReply(anonymous, me, 'declined')).toThrow(/no organizer/);
+	});
+});
+
+describe('meetingRequest', () => {
+	const meeting = {
+		uid: 'meeting-1@example.org',
+		organizer: { name: 'Me', address: 'me@example.org' },
+		required: [{ name: 'Alex', address: 'alex@example.com' }],
+		optional: [{ name: '', address: 'sam@example.com' }],
+		title: 'Planning, part 2',
+		description: 'Agenda; see notes',
+		location: 'Room 4',
+		start: '2026-10-20T08:00:00.000Z',
+		end: '2026-10-20T08:30:00.000Z'
+	};
+
+	it('reads back as an invitation from the organizer', () => {
+		const ics = meetingRequest(meeting, new Date('2026-10-19T10:00:00Z'));
+		expect(parseInvitation(ics, 'alex@example.com')).toEqual({
+			method: 'request',
+			title: 'Planning, part 2',
+			start: '2026-10-20T08:00:00.000Z',
+			end: '2026-10-20T08:30:00.000Z',
+			allDay: false,
+			location: 'Room 4',
+			uid: 'meeting-1@example.org',
+			organizer: { name: 'Me', address: 'me@example.org' },
+			recurring: false,
+			attendees: [
+				{ name: 'Alex', address: 'alex@example.com', status: 'needs-action' },
+				{ name: '', address: 'sam@example.com', status: 'needs-action' }
+			],
+			ownStatus: 'needs-action',
+			organizedByYou: false
+		});
+		expect(parseInvitation(ics, 'ME@example.org')?.organizedByYou).toBe(true);
+	});
+
+	it('marks attendee roles and asks for answers', () => {
+		const event = new ICAL.Component(ICAL.parse(meetingRequest(meeting))).getFirstSubcomponent(
+			'vevent'
+		)!;
+		const roles = event
+			.getAllProperties('attendee')
+			.map((p) => [p.getParameter('role'), p.getParameter('rsvp')]);
+		expect(roles).toEqual([
+			['REQ-PARTICIPANT', 'TRUE'],
+			['OPT-PARTICIPANT', 'TRUE']
+		]);
+		expect(event.getFirstPropertyValue('description')).toBe('Agenda; see notes');
 	});
 });
 

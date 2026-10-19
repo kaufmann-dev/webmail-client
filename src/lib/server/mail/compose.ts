@@ -7,9 +7,15 @@ import { mailAuth } from './credentials';
 import { errorMessage, MailError } from './errors';
 import { requireFolder, resolveFolder } from './folders';
 import * as ews from './ews/compose';
-import { embedDataImages, outgoingHtml, plainTextOf, textToComposeHtml } from './html-body';
+import {
+	embedDataImages,
+	outgoingHtml,
+	plainTextOf,
+	textToComposeHtml,
+	withoutDataImages
+} from './html-body';
 import { withClient, withMailbox } from './imap';
-import { invitationReply } from './invitations';
+import { invitationReply, meetingRequest, parseInvitation } from './invitations';
 import { encodeMessageRef } from './message-ref';
 import {
 	deleteMessages,
@@ -17,7 +23,8 @@ import {
 	getMessage,
 	groupRefs,
 	markAnswered,
-	resolveRef
+	resolveRef,
+	type ReadMessage
 } from './messages';
 import { PROVIDER_CONFIG } from './providers';
 import { createSmtpTransport } from './smtp';
@@ -56,6 +63,18 @@ export interface Draft {
 	attachments: OutgoingAttachment[];
 	/** An iMIP calendar reply, sent as a `text/calendar` alternative. */
 	calendar?: { method: 'REPLY'; content: string };
+	/** Makes the message an invitation: `to` are required attendees, `cc` optional ones. */
+	meeting?: Meeting;
+}
+
+/** A meeting the user organizes; the title is the subject and the description the body. */
+export interface Meeting {
+	/** Empty for a new meeting, which gets one when it is saved or sent. */
+	uid: string;
+	/** ISO instants. */
+	start: string;
+	end: string;
+	location: string | null;
 }
 
 export interface PreparedDraft {
@@ -143,7 +162,23 @@ export async function prepareForward(
 /** A saved draft, back as editable fields; its threading headers are kept. */
 export async function loadDraft(userId: string, ref: string): Promise<Draft> {
 	const { account, locator } = await resolveRef(userId, ref);
-	const { detail } = await getMessage(account, locator);
+	const read = await getMessage(account, locator);
+	const { detail } = read;
+	const meeting = meetingOf(account, read);
+	if (meeting) {
+		return {
+			accountId: account.id,
+			to: detail.to,
+			cc: detail.cc,
+			bcc: [],
+			subject: detail.subject,
+			html: detail.html,
+			inReplyTo: null,
+			references: [],
+			attachments: [],
+			meeting
+		};
+	}
 	return {
 		accountId: account.id,
 		to: detail.to,
@@ -165,6 +200,46 @@ function mailDomain(account: MailAccount): string {
 	return account.email.split('@')[1] ?? 'localhost';
 }
 
+/** The draft with an iCalendar UID for a new meeting, shared by everything built from it. */
+function withMeetingUid(account: MailAccount, draft: Draft): Draft {
+	const { meeting } = draft;
+	if (!meeting || meeting.uid) return draft;
+	return { ...draft, meeting: { ...meeting, uid: `${randomUUID()}@${mailDomain(account)}` } };
+}
+
+/**
+ * The meeting a saved draft carries: an invitation organized by the account itself, with a start,
+ * an end, and a UID. Other calendar parts (invitations received, all-day events) are not meetings.
+ */
+export function meetingOf(account: MailAccount, read: ReadMessage): Meeting | null {
+	const invitation = read.calendar ? parseInvitation(read.calendar, account.email) : null;
+	if (
+		!invitation ||
+		invitation.method !== 'request' ||
+		invitation.allDay ||
+		!invitation.end ||
+		!invitation.uid ||
+		!invitation.organizedByYou
+	) {
+		return null;
+	}
+	const { uid, start, end, location } = invitation;
+	return { uid, start, end, location };
+}
+
+/** Rejects meetings Exchange and calendar programs would not accept; drafts only need a time. */
+function checkMeeting(draft: Draft, sending: boolean) {
+	const { meeting } = draft;
+	if (!meeting) return;
+	const start = Date.parse(meeting.start);
+	const end = Date.parse(meeting.end);
+	if (Number.isNaN(start) || Number.isNaN(end)) throw new MailError('Choose a meeting time.', 400);
+	if (!sending) return;
+	if (end <= start) throw new MailError('The meeting must end after it starts.', 400);
+	if (draft.bcc.length) throw new MailError('Meetings have no Bcc attendees.', 400);
+	if (!draft.subject.trim()) throw new MailError('Give the meeting a title.', 400);
+}
+
 function newMessageId(account: MailAccount): string {
 	return `<${randomUUID()}@${mailDomain(account)}>`;
 }
@@ -175,6 +250,20 @@ async function buildRaw(
 	headers: { messageId: string; date: Date; keepBcc: boolean }
 ): Promise<Buffer> {
 	const { html, images } = embedDataImages(draft.html, mailDomain(account));
+	const { meeting } = draft;
+	const icalEvent = meeting
+		? {
+				method: 'REQUEST',
+				content: meetingRequest({
+					...meeting,
+					organizer: { name: account.displayName, address: account.email },
+					required: draft.to,
+					optional: draft.cc,
+					title: draft.subject,
+					description: plainTextOf(draft.html)
+				})
+			}
+		: draft.calendar;
 	const composer = new MailComposer({
 		from: { name: account.displayName, address: account.email },
 		to: draft.to,
@@ -185,8 +274,9 @@ async function buildRaw(
 		text: plainTextOf(draft.html),
 		inReplyTo: draft.inReplyTo ?? undefined,
 		references: draft.references.length ? draft.references : undefined,
-		attachments: [...draft.attachments, ...images],
-		icalEvent: draft.calendar,
+		// Meetings carry no files; calendar programs would not keep them with the event.
+		attachments: meeting ? images : [...draft.attachments, ...images],
+		icalEvent,
 		messageId: headers.messageId,
 		date: headers.date
 	});
@@ -200,7 +290,7 @@ function recipients(draft: Draft): string[] {
 }
 
 export interface SendResult {
-	/** Null for meeting responses Exchange composes itself. */
+	/** Null for meetings and meeting responses Exchange composes itself. */
 	messageId: string | null;
 	to: Address[];
 	cc: Address[];
@@ -214,14 +304,31 @@ export interface SendResult {
  */
 export async function sendDraft(
 	userId: string,
-	draft: Draft,
+	input: Draft,
 	options: { replacesDraftRef?: string | null; answersRef?: string | null } = {}
 ): Promise<SendResult> {
-	const account = await getAccount(userId, draft.accountId);
+	const account = await getAccount(userId, input.accountId);
+	const draft = withMeetingUid(account, input);
 	if (!recipients(draft).length) throw new MailError('Add at least one recipient.', 400);
+	checkMeeting(draft, true);
 	const messageId = newMessageId(account);
 	const date = new Date();
-	if (account.provider === 'exchange') {
+	if (account.provider === 'exchange' && draft.meeting) {
+		// A calendar item: Exchange sends the invitations, keeps the meeting, and tracks the answers.
+		try {
+			await ews.createMeeting(account, {
+				subject: draft.subject,
+				html: outgoingHtml(withoutDataImages(draft.html), toSummary(account).font),
+				start: draft.meeting.start,
+				end: draft.meeting.end,
+				location: draft.meeting.location,
+				required: draft.to,
+				optional: draft.cc
+			});
+		} catch (error) {
+			throw new MailError(`Sending failed: ${errorMessage(error)}`, 502);
+		}
+	} else if (account.provider === 'exchange') {
 		const raw = await buildRaw(account, draft, { messageId, date, keepBcc: true });
 		try {
 			await ews.sendMessage(account, raw);
@@ -260,7 +367,13 @@ export async function sendDraft(
 			.then(markAnswered)
 			.catch(() => undefined);
 	}
-	return { messageId, to: draft.to, cc: draft.cc, bcc: draft.bcc, subject: draft.subject };
+	return {
+		messageId: account.provider === 'exchange' && draft.meeting ? null : messageId,
+		to: draft.to,
+		cc: draft.cc,
+		bcc: draft.bcc,
+		subject: draft.subject
+	};
 }
 
 /** Answers an invitation: sends the iMIP reply to its organizer and marks the invitation answered. */
@@ -308,10 +421,12 @@ export async function respondToInvitation(
 /** Saves to the Drafts folder, replacing an earlier version; returns the new draft's ref. */
 export async function saveDraft(
 	userId: string,
-	draft: Draft,
+	input: Draft,
 	replacesRef?: string | null
 ): Promise<string> {
-	const account = await getAccount(userId, draft.accountId);
+	const account = await getAccount(userId, input.accountId);
+	const draft = withMeetingUid(account, input);
+	checkMeeting(draft, false);
 	const path = await requireFolder(account, 'drafts');
 	const messageId = newMessageId(account);
 	const raw = await buildRaw(account, draft, { messageId, date: new Date(), keepBcc: true });

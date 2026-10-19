@@ -28,7 +28,7 @@ export function followSend(message: OutgoingMessage): (error: string | null) => 
 	return (error) => {
 		if (--sending === 0) window.removeEventListener('beforeunload', confirmUnload);
 		if (!error) {
-			toast.success('Message sent', { id });
+			toast.success(message.state.meeting ? 'Invitation sent' : 'Message sent', { id });
 			invalidate('mail:list');
 			return;
 		}

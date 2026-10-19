@@ -32,6 +32,11 @@ export interface EmbeddedImage {
 
 const DATA_IMAGE = /(<img\b[^>]*?\ssrc\s*=\s*["']?)data:([\w.+-]+\/[\w.+-]+);base64,([^"'\s>]+)/gi;
 
+/** The HTML without its `data:` images, for Exchange calendar items, which cannot carry them. */
+export function withoutDataImages(html: string): string {
+	return html.replace(/<img\b[^>]*?\ssrc\s*=\s*["']?data:[^>]*>/gi, '');
+}
+
 /**
  * `data:` images (pasted, signature, and quoted ones) as inline parts referenced by `cid:`. Mail
  * programs and Exchange drop `data:` sources; nodemailer's `attachDataUrls` only works in its

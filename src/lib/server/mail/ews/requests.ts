@@ -1,4 +1,4 @@
-import type { InvitationResponse } from '../../../mail-types';
+import type { Address, InvitationResponse } from '../../../mail-types';
 import type { MessageFilters } from '../messages';
 import { escapeXml } from './xml';
 
@@ -353,5 +353,81 @@ export function respondToMeeting(id: string, response: InvitationResponse): stri
 		'<m:CreateItem MessageDisposition="SendAndSaveCopy"><m:Items>' +
 		`<t:${element}><t:ReferenceItemId Id="${escapeXml(id)}"/></t:${element}>` +
 		'</m:Items></m:CreateItem>'
+	);
+}
+
+export interface MeetingItem {
+	subject: string;
+	/** The HTML document of the description. */
+	html: string;
+	/** ISO instants. */
+	start: string;
+	end: string;
+	location: string | null;
+	required: Address[];
+	optional: Address[];
+}
+
+function attendees(element: string, addresses: Address[]): string {
+	if (!addresses.length) return '';
+	const list = addresses
+		.map(
+			(a) =>
+				'<t:Attendee><t:Mailbox>' +
+				(a.name ? `<t:Name>${escapeXml(a.name)}</t:Name>` : '') +
+				`<t:EmailAddress>${escapeXml(a.address)}</t:EmailAddress></t:Mailbox></t:Attendee>`
+		)
+		.join('');
+	return `<t:${element}>${list}</t:${element}>`;
+}
+
+/**
+ * A meeting in the calendar; Exchange sends the invitations and keeps a copy in Sent Items. The
+ * elements follow the schema's order.
+ */
+export function createMeeting(meeting: MeetingItem): string {
+	return (
+		'<m:CreateItem SendMeetingInvitations="SendToAllAndSaveCopy">' +
+		'<m:SavedItemFolderId><t:DistinguishedFolderId Id="calendar"/></m:SavedItemFolderId>' +
+		'<m:Items><t:CalendarItem>' +
+		`<t:Subject>${escapeXml(meeting.subject)}</t:Subject>` +
+		`<t:Body BodyType="HTML">${escapeXml(meeting.html)}</t:Body>` +
+		`<t:Start>${escapeXml(meeting.start)}</t:Start>` +
+		`<t:End>${escapeXml(meeting.end)}</t:End>` +
+		(meeting.location ? `<t:Location>${escapeXml(meeting.location)}</t:Location>` : '') +
+		attendees('RequiredAttendees', meeting.required) +
+		attendees('OptionalAttendees', meeting.optional) +
+		'</t:CalendarItem></m:Items></m:CreateItem>'
+	);
+}
+
+/** The legacy time zone element for UTC: no bias and no daylight saving time. */
+const UTC_ZONE = (() => {
+	const rule = (name: string) =>
+		`<t:${name}><t:Bias>0</t:Bias><t:Time>00:00:00</t:Time><t:DayOrder>1</t:DayOrder>` +
+		`<t:Month>1</t:Month><t:DayOfWeek>Sunday</t:DayOfWeek></t:${name}>`;
+	return `<t:TimeZone><t:Bias>0</t:Bias>${rule('StandardTime')}${rule('DaylightTime')}</t:TimeZone>`;
+})();
+
+/** `2026-10-20T08:00:00` in UTC, as availability requests and responses use it. */
+const utcDateTime = (iso: string) => new Date(iso).toISOString().slice(0, 19);
+
+/** Free and busy times of mailboxes between two instants, in UTC. */
+export function getUserAvailability(addresses: string[], start: string, end: string): string {
+	const mailboxes = addresses
+		.map(
+			(address) =>
+				`<t:MailboxData><t:Email><t:Address>${escapeXml(address)}</t:Address></t:Email>` +
+				'<t:AttendeeType>Required</t:AttendeeType><t:ExcludeConflicts>false</t:ExcludeConflicts></t:MailboxData>'
+		)
+		.join('');
+	return (
+		`<m:GetUserAvailabilityRequest>${UTC_ZONE}` +
+		`<m:MailboxDataArray>${mailboxes}</m:MailboxDataArray>` +
+		'<t:FreeBusyViewOptions><t:TimeWindow>' +
+		`<t:StartTime>${utcDateTime(start)}</t:StartTime><t:EndTime>${utcDateTime(end)}</t:EndTime>` +
+		'</t:TimeWindow><t:MergedFreeBusyIntervalInMinutes>30</t:MergedFreeBusyIntervalInMinutes>' +
+		'<t:RequestedView>FreeBusy</t:RequestedView></t:FreeBusyViewOptions>' +
+		'</m:GetUserAvailabilityRequest>'
 	);
 }

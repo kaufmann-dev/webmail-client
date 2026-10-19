@@ -4,11 +4,13 @@ import type { AttachmentInfo, ComposeState } from '#lib/mail-types.js';
 import { listAccounts, toSummary } from '#lib/server/mail/accounts.js';
 import { parseAddressList } from '#lib/server/mail/addresses.js';
 import {
+	meetingOf,
 	prepareForward,
 	prepareReply,
 	saveDraft,
 	sendDraft,
 	type Draft,
+	type Meeting,
 	type OutgoingAttachment
 } from '#lib/server/mail/compose.js';
 import { errorMessage, MailError } from '#lib/server/mail/errors.js';
@@ -33,6 +35,14 @@ function rethrow(e: unknown): never {
 	throw e;
 }
 
+/** Starts at the next full hour and lasts 30 minutes. */
+function defaultMeeting() {
+	const start = new Date();
+	start.setUTCHours(start.getUTCHours() + 1, 0, 0, 0);
+	const end = new Date(start.getTime() + 30 * 60_000);
+	return { start: start.toISOString(), end: end.toISOString(), location: '' };
+}
+
 export const load: PageServerLoad = async ({ url, locals }) => {
 	const userId = locals.user.id;
 	const accounts = await listAccounts(userId);
@@ -43,7 +53,8 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 		replacesDraftRef: '',
 		answersRef: '',
 		carriedRef: '',
-		carried: []
+		carried: [],
+		meeting: null
 	};
 	let state: ComposeState;
 	try {
@@ -83,7 +94,9 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 			};
 		} else if (draft) {
 			const { account, locator } = await resolveRef(userId, draft);
-			const { detail } = await getMessage(account, locator);
+			const read = await getMessage(account, locator);
+			const { detail } = read;
+			const meeting = meetingOf(account, read);
 			state = {
 				...empty,
 				mode: 'draft',
@@ -96,8 +109,16 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 				inReplyTo: detail.inReplyTo ?? '',
 				references: detail.references.join(' '),
 				replacesDraftRef: draft,
-				carriedRef: draft,
-				carried: detail.attachments
+				// A meeting's only attachment is its own calendar file, which is rebuilt when sending.
+				...(meeting
+					? {
+							meeting: {
+								start: meeting.start,
+								end: meeting.end,
+								location: meeting.location ?? ''
+							}
+						}
+					: { carriedRef: draft, carried: detail.attachments })
 			};
 		} else {
 			const account = accounts.find((a) => a.id === params.get('account')) ?? accounts[0] ?? null;
@@ -109,7 +130,8 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 				cc: '',
 				bcc: '',
 				subject: params.get('subject') ?? '',
-				body: composeBody(EMPTY_LINE, account?.signature ?? null)
+				body: composeBody(EMPTY_LINE, account?.signature ?? null),
+				meeting: params.get('meeting') === '1' ? defaultMeeting() : null
 			};
 		}
 	} catch (e) {
@@ -139,6 +161,15 @@ async function draftFromForm(userId: string, form: FormData) {
 				content: Buffer.from(await file.arrayBuffer())
 			}))
 	);
+	const meetingStart = text('meetingStart');
+	const meeting: Meeting | undefined = meetingStart
+		? {
+				uid: '',
+				start: meetingStart,
+				end: text('meetingEnd'),
+				location: text('meetingLocation').trim() || null
+			}
+		: undefined;
 	const draft: Draft = {
 		accountId: text('accountId'),
 		to: parseAddressList(text('to')),
@@ -149,7 +180,8 @@ async function draftFromForm(userId: string, form: FormData) {
 		html: sanitizeEmailHtml(text('body')).html,
 		inReplyTo: text('inReplyTo') || null,
 		references: text('references').split(/\s+/).filter(Boolean),
-		attachments: [...carried, ...uploads]
+		attachments: meeting ? [] : [...carried, ...uploads],
+		meeting
 	};
 	return {
 		draft,
@@ -185,10 +217,12 @@ export const actions: Actions = {
 				await request.formData()
 			);
 			const ref = await saveDraft(locals.user.id, draft, replacesDraftRef);
-			// The saved draft now holds every attachment; later saves carry them from it.
+			// The saved draft now holds every attachment; later saves carry them from it. A meeting
+			// draft holds only its calendar file, which is rebuilt each time.
 			const saved = await resolveRef(locals.user.id, ref);
-			const carried: AttachmentInfo[] = (await getMessage(saved.account, saved.locator)).detail
-				.attachments;
+			const carried: AttachmentInfo[] = draft.meeting
+				? []
+				: (await getMessage(saved.account, saved.locator)).detail.attachments;
 			return { saved: true, draftRef: ref, carried };
 		}),
 	discard: ({ request, locals }) =>

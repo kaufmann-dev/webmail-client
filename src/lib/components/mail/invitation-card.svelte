@@ -71,7 +71,11 @@
 		</div>
 	</div>
 
-	{#if invitation.method === 'request'}
+	{#if invitation.method === 'request' && invitation.organizedByYou}
+		<p class="break-words text-muted-foreground">
+			Invited: {invitation.attendees.map(senderName).join(', ')}
+		</p>
+	{:else if invitation.method === 'request'}
 		<div class="flex flex-wrap gap-2" role="group" aria-label="Your answer">
 			{#each INVITATION_RESPONSES as response (response)}
 				<TooltipButton

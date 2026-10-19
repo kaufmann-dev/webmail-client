@@ -19,6 +19,15 @@ export async function sendMessage(account: MailAccount, mime: Buffer): Promise<v
 	check(message);
 }
 
+/** Creates a meeting in the calendar; Exchange sends the invitations and tracks the answers. */
+export async function createMeeting(
+	account: MailAccount,
+	meeting: request.MeetingItem
+): Promise<void> {
+	const [message] = await ewsCall(account, request.createMeeting(meeting));
+	check(message);
+}
+
 /**
  * Answers a meeting request the Exchange way, which also updates the calendar. Returns false when
  * the item is not a meeting request (an `.ics` file in an ordinary message, for example).

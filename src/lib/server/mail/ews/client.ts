@@ -39,16 +39,25 @@ function failureCode(error: unknown): string {
 	return errorMessage(error);
 }
 
-/** The response messages of one EWS operation, in request order. */
-export function responseMessages(xml: string): XmlNode[] {
+/** The response element of an EWS operation, such as `GetItemResponse`; SOAP faults throw. */
+export function operationResponse(xml: string): XmlNode | undefined {
 	const body = child(child(parseXml(xml), 'Envelope'), 'Body');
 	const fault = child(body, 'Fault');
 	if (fault) throw new MailError(`Exchange: ${text(fault.faultstring) || 'request failed'}`, 502);
-	const operation = Object.values(body ?? {}).find((value) => typeof value === 'object');
-	const messages = child(operation as XmlNode | undefined, 'ResponseMessages');
+	return Object.values(body ?? {}).find((value) => typeof value === 'object') as
+		XmlNode | undefined;
+}
+
+function messagesOf(operation: XmlNode | undefined): XmlNode[] {
+	const messages = child(operation, 'ResponseMessages');
 	return Object.entries(messages ?? {})
 		.filter(([name]) => name.endsWith('ResponseMessage'))
 		.flatMap(([, value]) => list(value));
+}
+
+/** The response messages of one EWS operation, in request order. */
+export function responseMessages(xml: string): XmlNode[] {
+	return messagesOf(operationResponse(xml));
 }
 
 /** Throws a user-facing error for a failed response message and returns it otherwise. */
@@ -66,7 +75,7 @@ export function failed(message: XmlNode): boolean {
 	return attr(message, 'ResponseClass') === 'Error';
 }
 
-export async function post(target: EwsTarget, body: string): Promise<XmlNode[]> {
+async function post(target: EwsTarget, body: string): Promise<XmlNode | undefined> {
 	let response: Response;
 	try {
 		response = await fetch(`https://${target.server}/EWS/Exchange.asmx`, {
@@ -87,19 +96,33 @@ export async function post(target: EwsTarget, body: string): Promise<XmlNode[]> 
 	if (!xml.includes('Envelope')) {
 		throw new MailError(`Exchange answered with HTTP ${response.status}.`, 502);
 	}
-	return responseMessages(xml);
+	return operationResponse(xml);
 }
 
-/** Calls EWS for an account, recording failures that concern the whole account. */
+/** Calls EWS for an account and returns the response messages. */
 export async function ewsCall(account: MailAccount, body: string): Promise<XmlNode[]> {
+	return messagesOf(await ewsOperation(account, body));
+}
+
+/**
+ * Calls EWS for an account and returns the operation's response element, for operations without
+ * response messages (`GetUserAvailability`). Records failures that concern the whole account.
+ */
+export async function ewsOperation(
+	account: MailAccount,
+	body: string
+): Promise<XmlNode | undefined> {
 	const auth = await mailAuth(account);
 	if (!account.server || !('pass' in auth)) {
 		throw new MailError(`${account.email} has no Exchange server configured.`, 400);
 	}
 	try {
-		const messages = await post({ server: account.server, user: auth.user, pass: auth.pass }, body);
+		const operation = await post(
+			{ server: account.server, user: auth.user, pass: auth.pass },
+			body
+		);
 		await clearAccountError(account);
-		return messages;
+		return operation;
 	} catch (error) {
 		let accountError: MailError | null = null;
 		if (error instanceof EwsSignInError) {
@@ -119,10 +142,12 @@ export async function ewsCall(account: MailAccount, body: string): Promise<XmlNo
 /** Signs in before an account is saved, so broken credentials are never stored. */
 export async function testConnection(target: EwsTarget): Promise<void> {
 	try {
-		const [message] = await post(
-			target,
-			'<m:GetFolder><m:FolderShape><t:BaseShape>IdOnly</t:BaseShape></m:FolderShape>' +
-				'<m:FolderIds><t:DistinguishedFolderId Id="inbox"/></m:FolderIds></m:GetFolder>'
+		const [message] = messagesOf(
+			await post(
+				target,
+				'<m:GetFolder><m:FolderShape><t:BaseShape>IdOnly</t:BaseShape></m:FolderShape>' +
+					'<m:FolderIds><t:DistinguishedFolderId Id="inbox"/></m:FolderIds></m:GetFolder>'
+			)
 		);
 		check(message);
 	} catch (error) {

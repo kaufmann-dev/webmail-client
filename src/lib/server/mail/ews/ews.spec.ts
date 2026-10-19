@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { MailError } from '../errors';
 import { decodeMessageRef } from '../message-ref';
-import { check, failed, responseMessages } from './client';
+import { check, failed, operationResponse, responseMessages } from './client';
+import { availabilityOf } from './calendar';
 import { buildFolders } from './folders';
 import { attachmentIdOf, attachmentsOf, firstItem, itemsOf, partIdOf, summaryOf } from './items';
 import * as request from './requests';
@@ -272,5 +273,57 @@ describe('requests', () => {
 		expect(send).not.toContain('0x0E07');
 		expect(send).toContain('<t:DistinguishedFolderId Id="sentitems"/>');
 		expect(send).toContain(mime.toString('base64'));
+	});
+});
+
+describe('meetings', () => {
+	it('escapes the calendar item and keeps the schema order', () => {
+		const body = request.createMeeting({
+			subject: 'Budget & plans',
+			html: '<p>Hi</p>',
+			start: '2026-10-20T08:00:00.000Z',
+			end: '2026-10-20T08:30:00.000Z',
+			location: null,
+			required: [{ name: 'Alex <A>', address: 'alex@example.com' }],
+			optional: []
+		});
+		expect(body).toContain('<t:Subject>Budget &amp; plans</t:Subject>');
+		expect(body).toContain('<t:Body BodyType="HTML">&lt;p&gt;Hi&lt;/p&gt;</t:Body>');
+		expect(body).toContain('<t:Name>Alex &lt;A&gt;</t:Name>');
+		expect(body).not.toContain('Location');
+		expect(body).not.toContain('OptionalAttendees');
+		const order = ['Subject', 'Body', 'Start', 'End', 'RequiredAttendees'].map((name) =>
+			body.indexOf(`<t:${name}`)
+		);
+		expect(order).toEqual([...order].sort((a, b) => a - b));
+	});
+
+	it('reads availability per address, unknown where Exchange has none', () => {
+		const response = operationResponse(
+			soap(
+				'<m:GetUserAvailabilityResponse><m:FreeBusyResponseArray>' +
+					'<m:FreeBusyResponse><m:ResponseMessage ResponseClass="Success"><m:ResponseCode>NoError</m:ResponseCode></m:ResponseMessage>' +
+					'<m:FreeBusyView><t:FreeBusyViewType>FreeBusy</t:FreeBusyViewType><t:CalendarEventArray>' +
+					'<t:CalendarEvent><t:StartTime>2026-10-20T08:00:00</t:StartTime><t:EndTime>2026-10-20T09:00:00</t:EndTime><t:BusyType>Busy</t:BusyType></t:CalendarEvent>' +
+					'<t:CalendarEvent><t:StartTime>2026-10-20T10:00:00</t:StartTime><t:EndTime>2026-10-20T11:00:00</t:EndTime><t:BusyType>Free</t:BusyType></t:CalendarEvent>' +
+					'<t:CalendarEvent><t:StartTime>2026-10-20T12:00:00</t:StartTime><t:EndTime>2026-10-20T13:00:00</t:EndTime><t:BusyType>Tentative</t:BusyType></t:CalendarEvent>' +
+					'</t:CalendarEventArray></m:FreeBusyView></m:FreeBusyResponse>' +
+					'<m:FreeBusyResponse><m:ResponseMessage ResponseClass="Error"><m:ResponseCode>ErrorMailRecipientNotFound</m:ResponseCode></m:ResponseMessage></m:FreeBusyResponse>' +
+					'</m:FreeBusyResponseArray></m:GetUserAvailabilityResponse>'
+			)
+		);
+		expect(availabilityOf(response, ['me@example.org', 'guest@else.example'])).toEqual([
+			{
+				address: 'me@example.org',
+				busy: [
+					{ start: '2026-10-20T08:00:00.000Z', end: '2026-10-20T09:00:00.000Z', tentative: false },
+					{ start: '2026-10-20T12:00:00.000Z', end: '2026-10-20T13:00:00.000Z', tentative: true }
+				]
+			},
+			{ address: 'guest@else.example', busy: null }
+		]);
+		expect(
+			request.getUserAvailability(['a@b.example'], '2026-10-20T00:00:00Z', '2026-10-21T00:00:00Z')
+		).toContain('<t:StartTime>2026-10-20T00:00:00</t:StartTime>');
 	});
 });

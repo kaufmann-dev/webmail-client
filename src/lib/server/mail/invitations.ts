@@ -8,6 +8,7 @@ import type {
 	InvitationResponse
 } from '../../mail-types';
 import { MailError } from './errors';
+import { isTimeZone, zonedToUtc } from './time-zones';
 
 type Component = InstanceType<typeof ICAL.Component>;
 type Property = InstanceType<typeof ICAL.Property>;
@@ -89,46 +90,6 @@ function partstat(property: Property): AttendeeStatus {
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
-function isTimeZone(name: string): boolean {
-	try {
-		new Intl.DateTimeFormat('en-US', { timeZone: name });
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-/** UTC milliseconds of a wall-clock time in an IANA time zone. */
-function zonedToUtc(time: Time, timeZone: string): number {
-	const format = new Intl.DateTimeFormat('en-US', {
-		timeZone,
-		hourCycle: 'h23',
-		year: 'numeric',
-		month: 'numeric',
-		day: 'numeric',
-		hour: 'numeric',
-		minute: 'numeric',
-		second: 'numeric'
-	});
-	const offsetAt = (ms: number) => {
-		const parts = Object.fromEntries(
-			format.formatToParts(ms).map((p) => [p.type, Number(p.value)])
-		);
-		const wall = Date.UTC(
-			parts.year,
-			parts.month - 1,
-			parts.day,
-			parts.hour,
-			parts.minute,
-			parts.second
-		);
-		return wall - ms;
-	};
-	const wall = Date.UTC(time.year, time.month - 1, time.day, time.hour, time.minute, time.second);
-	// The second pass corrects the offset when the first guess lands across a DST change.
-	return wall - offsetAt(wall - offsetAt(wall));
-}
-
 /**
  * The instant of a date-time. ical.js applies UTC and VTIMEZONEs from the same file; an IANA TZID
  * without a VTIMEZONE is converted here, and anything else is read as UTC.
@@ -163,15 +124,18 @@ export function parseInvitation(ics: string, ownAddress: string): Invitation | n
 			return address ? [{ ...address, status: partstat(property) }] : [];
 		});
 		const own = ownAddress.toLowerCase();
+		const organizer = calAddress(event.getFirstProperty('organizer'));
 		return {
 			method: METHODS[method(calendar)] ?? 'other',
 			title: text(event.getFirstPropertyValue('summary')) ?? '',
 			...when(event),
 			location: text(event.getFirstPropertyValue('location')),
-			organizer: calAddress(event.getFirstProperty('organizer')),
+			uid: text(event.getFirstPropertyValue('uid')),
+			organizer,
 			recurring: event.hasProperty('rrule') || event.hasProperty('rdate'),
 			attendees,
-			ownStatus: attendees.find((a) => a.address.toLowerCase() === own)?.status ?? null
+			ownStatus: attendees.find((a) => a.address.toLowerCase() === own)?.status ?? null,
+			organizedByYou: organizer?.address.toLowerCase() === own
 		};
 	} catch {
 		return null;
@@ -233,4 +197,56 @@ export function invitationReply(
 		text: `${attendee.name || attendee.address} has ${words.verb} this invitation.`,
 		ics: reply.toString()
 	};
+}
+
+/** A meeting the user organizes; attendees and title come from the message carrying it. */
+export interface MeetingRequest {
+	uid: string;
+	organizer: Address;
+	required: Address[];
+	optional: Address[];
+	title: string;
+	description: string;
+	location: string | null;
+	/** ISO instants. */
+	start: string;
+	end: string;
+}
+
+function calAddressProperty(name: 'organizer' | 'attendee', address: Address): Property {
+	const property = new ICAL.Property(name);
+	property.setValue(`mailto:${address.address}`);
+	if (address.name) property.setParameter('cn', address.name);
+	return property;
+}
+
+/** An iMIP request (RFC 5546 §3.2.2) inviting the attendees to a new meeting, in UTC. */
+export function meetingRequest(meeting: MeetingRequest, now = new Date()): string {
+	const calendar = new ICAL.Component('vcalendar');
+	calendar.addPropertyWithValue('prodid', PRODID);
+	calendar.addPropertyWithValue('version', '2.0');
+	calendar.addPropertyWithValue('method', 'REQUEST');
+	const event = new ICAL.Component('vevent');
+	event.addPropertyWithValue('uid', meeting.uid);
+	event.addPropertyWithValue('sequence', 0);
+	event.addPropertyWithValue('dtstamp', ICAL.Time.fromJSDate(now, true));
+	event.addPropertyWithValue('dtstart', ICAL.Time.fromJSDate(new Date(meeting.start), true));
+	event.addPropertyWithValue('dtend', ICAL.Time.fromJSDate(new Date(meeting.end), true));
+	event.addPropertyWithValue('summary', meeting.title);
+	if (meeting.location) event.addPropertyWithValue('location', meeting.location);
+	if (meeting.description) event.addPropertyWithValue('description', meeting.description);
+	event.addProperty(calAddressProperty('organizer', meeting.organizer));
+	const roles = [
+		...meeting.required.map((a) => [a, 'REQ-PARTICIPANT'] as const),
+		...meeting.optional.map((a) => [a, 'OPT-PARTICIPANT'] as const)
+	];
+	for (const [address, role] of roles) {
+		const attendee = calAddressProperty('attendee', address);
+		attendee.setParameter('role', role);
+		attendee.setParameter('partstat', 'NEEDS-ACTION');
+		attendee.setParameter('rsvp', 'TRUE');
+		event.addProperty(attendee);
+	}
+	calendar.addSubcomponent(event);
+	return calendar.toString();
 }

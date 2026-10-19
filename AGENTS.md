@@ -46,8 +46,11 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
     recorded in `mail_account.last_error` through `account-status.ts`.
   - `ews/`: Exchange accounts over Exchange Web Services (SOAP, Basic authentication, the account's
     `server` and optional `username`), with no IMAP: `client.ts` (requests and errors),
-    `requests.ts` (request bodies), `items.ts` (response mapping), `folders.ts`, `messages.ts`, and
-    `compose.ts` (drafts and sending as MIME, native meeting responses). Lists page by position.
+    `requests.ts` (request bodies), `items.ts` (response mapping), `folders.ts`, `messages.ts`,
+    `compose.ts` (drafts and sending as MIME, meetings as calendar items, native meeting
+    responses), and `calendar.ts` (free/busy through `GetUserAvailability`, which `ewsOperation`
+    calls because it has no response messages). Lists page by position. Reading fetches the
+    calendar part of meeting messages and of messages carrying a calendar part (meeting drafts).
   - `messages.ts`: listing, search, reading, moving, and threads. Reading fetches only body text,
     calendar parts, and embedded images (`structure.ts`); attachments download on demand. Read
     messages stay in an in-memory cache that `setFlags`, `moveMessages`, and `deleteMessages` keep
@@ -55,6 +58,10 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
   - `compose.ts`: drafts and sending. Outgoing mail is HTML (`html-body.ts`: the document around
     the editor HTML, in the account's font from `MAIL_FONTS` in `src/lib/html.ts` or none, and its
     `html-to-text` plain-text alternative); `data:` images go out as embedded parts.
+    `Draft.meeting` makes a message a meeting invitation (`to` required, `cc` optional attendees,
+    no Bcc or attachments): drafts are ordinary Drafts messages with an iMIP request part, which
+    `meetingOf` reads back; sending creates an Exchange calendar item, or mails the request over
+    SMTP (it does not enter the user's calendar there).
   - `body-text.ts`: bodies as plain text for AI clients (`ReadMessage.detail.text`) from the HTML
     when there is one: decoded entities, Markdown data tables, `[image: name]`, and the new text
     without quoted messages (`ReadMessage.newText`, by quote containers first, then text patterns;
@@ -67,8 +74,12 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
     counts and `last_from_me` agree with `get_thread`.
   - `threading.ts`: pure reply and forward header logic, the HTML quote and forward block, and
     `composeBody` (text, `wm-signature` block, `wm-quote` block).
-  - `invitations.ts`: pure calendar invitation parsing and iMIP replies (ical.js);
-    `respondToInvitation` in `compose.ts` sends them.
+  - `invitations.ts`: pure calendar invitation parsing, iMIP replies, and meeting requests
+    (ical.js, in UTC); `respondToInvitation` in `compose.ts` sends replies. `time-zones.ts` converts
+    wall-clock times in IANA zones with `Intl` only.
+  - `availability.ts`: free times for a meeting (`freeTimes`, pure: weekdays, working hours,
+    tentative counts as busy) from Exchange free/busy; served to the compose form by
+    `/api/availability` and to MCP by `find_meeting_times`. Exchange only.
 - Reply and forward headers (`In-Reply-To`, `References`, subject prefixes, recipients) are built
   only by `prepareReply` / `prepareForward` in `compose.ts`, using `threading.ts`. Never accept them
   from MCP input.
@@ -111,6 +122,8 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
   - Lists pass `access.notBefore(accounts)` to `listMessages`, and threads pass through
     `access.visible`.
   - Without attachments, `get_message` leaves out the attachment list (file names included).
+  - `create_meeting` needs `organize` for drafts and `send` to send, like `compose_new_message`;
+    `find_meeting_times` needs `read`.
   - Folder tools need `organize`. `delete_folder` deletes only empty folders, since a full delete
     would also destroy messages outside the time window. `rename_folder` rewrites the short refs
     of messages in the renamed subtree (`McpRefs.folderRenamed`).
