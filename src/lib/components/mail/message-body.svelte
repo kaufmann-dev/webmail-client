@@ -90,7 +90,7 @@ blockquote{margin:0 0 0 .5em;padding-left:.75em;border-left:2px solid #ccc}`;
 	sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
 	{srcdoc}
 	onload={fit}
-	class="block min-h-24 w-full rounded-lg border bg-white scheme-light"
+	class="block min-h-24 w-full shrink-0 rounded-lg border bg-white scheme-light"
 ></iframe>
 
 {#if viewing}
