@@ -106,8 +106,8 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
 ## Auth and MCP
 
 - Construct `auth` only through `initAuth()` in the server `init` hook, after migrations.
-- `src/lib/server/csrf.ts` replaces SvelteKit's CSRF check, minus `/api/auth/*`.
-  `hooks.server.ts` routes `/.well-known/*` to Better Auth.
+- `src/lib/server/csrf.ts` replaces SvelteKit's CSRF check, minus `/api/auth/*` and
+  `/mcp/uploads/*`. `hooks.server.ts` routes `/.well-known/*` to Better Auth.
 - The MCP endpoint (`src/routes/mcp/+server.ts`) requires the single OAuth scope `mail`. Per-account
   access lives in `mcp_account_access`, set on `/consent` and in Settings → Connected apps (both
   through `access-grant-fields.svelte` and `grantsFromForm`): a level (`read` < `organize` <
@@ -129,6 +129,13 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
     of messages in the renamed subtree (`McpRefs.folderRenamed`).
 - Tool results are compact JSON that leave out defaults: boolean flags only when true, `account`
   only when results span several accounts, `to` in lists only when it is not just the account.
+- Attachment bytes never pass through tool calls. `get_attachment` returns readable content
+  (`mail/attachment-text.ts`: text files, and documents as Markdown via `officeparser`) and a
+  download link; `create_attachment_upload` returns an upload link, and sending tools take
+  `{upload_id}` or `{message_ref, part_id}`. The links (`mcp/transfers.ts`, routes
+  `/mcp/files/[token]` and `/mcp/uploads/[token]`) live in memory only, are authenticated by their
+  token alone, and are bound to the user and OAuth client; downloads check access again when
+  fetched.
 - Sending tools default to `mode: 'draft'`, except `respond_to_invitation`, which always sends (a
   saved draft would lose its calendar part).
 

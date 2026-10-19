@@ -12,7 +12,7 @@ import { createMcpServer } from '#lib/server/mcp/tools.js';
 const mcpHandler = createMcpHandler(async ({ authInfo }) => {
 	const userId = String(authInfo?.extra?.userId ?? '');
 	const clientId = authInfo?.clientId ?? '';
-	return createMcpServer(userId, await McpAccess.load(userId, clientId));
+	return createMcpServer(userId, clientId, await McpAccess.load(userId, clientId));
 });
 
 type AccessTokenClaims = Parameters<Parameters<typeof requireMcpAuth>[1]>[1];

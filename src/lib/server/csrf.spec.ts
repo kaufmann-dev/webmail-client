@@ -26,4 +26,12 @@ describe('isForbiddenCrossSiteForm', () => {
 		).toBe(false);
 		expect(isForbiddenCrossSiteForm(post(form), url('/api/auth/oauth2/token'))).toBe(false);
 	});
+
+	it('allows token-authenticated MCP uploads without an origin', () => {
+		const upload = new Request('https://x.test', {
+			method: 'PUT',
+			headers: { 'content-type': 'text/plain' }
+		});
+		expect(isForbiddenCrossSiteForm(upload, url('/mcp/uploads/abc'))).toBe(false);
+	});
 });

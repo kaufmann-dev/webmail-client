@@ -78,7 +78,7 @@ Better Auth tables live in `src/lib/server/db/auth-schema.ts`. The app's own tab
 | `CREDENTIALS_KEY`         | Yes      | 32 random bytes, base64 (`openssl rand -base64 32`). Encrypts stored mail passwords and tokens; changing it means re-adding every account |
 | `MICROSOFT_CLIENT_ID`     | No       | Entra app client ID; without it, Microsoft 365 accounts cannot be added                                                                   |
 | `MICROSOFT_CLIENT_SECRET` | No       | Entra app client secret                                                                                                                   |
-| `BODY_SIZE_LIMIT`         | No       | adapter-node request body limit (default `512K`). Set `30M` so attachments up to about 25 MB can be sent                                  |
+| `BODY_SIZE_LIMIT`         | No       | adapter-node request body limit (default `512K`). Set `30M` so attachments up to about 25 MB can be sent or uploaded                      |
 
 ## Mail Accounts
 
@@ -126,8 +126,16 @@ shows these steps with copyable commands for the deployed URL.
 - **Limits:** per account, an app can also be held to messages received in the last 7, 30, or 90
   days, and attachments can be withheld. Older messages then do not appear in lists, searches, or
   conversations, and every tool refuses them. Without attachments, `get_message` leaves out the
-  attachment list, `get_attachment` is refused, and `forward_message` only forwards without
-  attachments. The server enforces both on every tool call.
+  attachment list, `get_attachment` and its download links are refused, `forward_message` only
+  forwards without attachments, and files of other messages cannot be attached. The server enforces
+  both on every tool call.
+- **Attachments:** `get_attachment` returns readable content (text files, images, and the text of
+  PDF, Office, and OpenDocument files as Markdown) and a download link valid for 15 minutes, so
+  agents with a shell save the file with `curl` instead of reading base64. To send a local file,
+  `create_attachment_upload` returns an upload link valid for one hour (`curl -T`, up to 25 MB);
+  the sending tools then take `{upload_id}`, or `{message_ref, part_id}` to attach a file from
+  another message without downloading it. Links are kept in memory only, bound to the user and
+  app, and downloads check the app's access again when fetched.
 - **Meetings:** `create_meeting` invites attendees (a draft unless sending was asked for), and
   `find_meeting_times` finds times that suit everyone on Exchange accounts.
 - **Changing access:** Settings → Connected apps edits these choices at any time. Changes take effect
@@ -140,24 +148,25 @@ shows these steps with copyable commands for the deployed URL.
   - Client ID Metadata Documents and Dynamic Client Registration.
   - PKCE (S256).
 
-| Tool                    | Level            | Purpose                                                                           |
-| ----------------------- | ---------------- | --------------------------------------------------------------------------------- |
-| `list_accounts`         | Read             | Granted accounts with their access levels and limits                              |
-| `list_folders`          | Read             | An account's folders, with roles (inbox, drafts, sent, archive, spam, trash)      |
-| `list_messages`         | Read             | A folder across one or all granted accounts, newest first, with previews, paging  |
-| `search_messages`       | Read             | Search by text, sender, recipient, subject, date, unread, or starred              |
-| `get_message`           | Read             | Headers, body, attachments (if allowed), invitation; does not mark it read        |
-| `get_thread`            | Read             | The whole conversation with each message's new text, sent ones included           |
-| `get_attachment`        | Read             | An attachment as text, image, or base64 (up to 10 MB), if attachments are allowed |
-| `update_messages`       | Read & organize  | Mark read/unread, star, archive, trash, spam, or move                             |
-| `create_folder`         | Read & organize  | Create a folder at the top level or below another folder                          |
-| `rename_folder`         | Read & organize  | Rename a custom folder in place; message refs inside stay valid                   |
-| `delete_folder`         | Read & organize  | Delete an empty custom folder; refuses folders that still hold messages           |
-| `reply_to_message`      | Organize or Full | Threaded reply or reply-all with the quote; `mode` is `draft` (default) or `send` |
-| `forward_message`       | Organize or Full | Forward with the original headers, and attachments if allowed                     |
-| `compose_new_message`   | Organize or Full | New conversations only; rejects `Re:` subjects                                    |
-| `send_draft`            | Full             | Send a draft from the Drafts folder                                               |
-| `respond_to_invitation` | Full             | Accept, tentatively accept, or decline an invitation; sends immediately           |
+| Tool                       | Level            | Purpose                                                                           |
+| -------------------------- | ---------------- | --------------------------------------------------------------------------------- |
+| `list_accounts`            | Read             | Granted accounts with their access levels and limits                              |
+| `list_folders`             | Read             | An account's folders, with roles (inbox, drafts, sent, archive, spam, trash)      |
+| `list_messages`            | Read             | A folder across one or all granted accounts, newest first, with previews, paging  |
+| `search_messages`          | Read             | Search by text, sender, recipient, subject, date, unread, or starred              |
+| `get_message`              | Read             | Headers, body, attachments (if allowed), invitation; does not mark it read        |
+| `get_thread`               | Read             | The whole conversation with each message's new text, sent ones included           |
+| `get_attachment`           | Read             | Readable content and a download link, if attachments are allowed                  |
+| `create_attachment_upload` | Organize or Full | An upload link for a local file to attach                                         |
+| `update_messages`          | Read & organize  | Mark read/unread, star, archive, trash, spam, or move                             |
+| `create_folder`            | Read & organize  | Create a folder at the top level or below another folder                          |
+| `rename_folder`            | Read & organize  | Rename a custom folder in place; message refs inside stay valid                   |
+| `delete_folder`            | Read & organize  | Delete an empty custom folder; refuses folders that still hold messages           |
+| `reply_to_message`         | Organize or Full | Threaded reply or reply-all with the quote; `mode` is `draft` (default) or `send` |
+| `forward_message`          | Organize or Full | Forward with the original headers, and attachments if allowed                     |
+| `compose_new_message`      | Organize or Full | New conversations only; rejects `Re:` subjects                                    |
+| `send_draft`               | Full             | Send a draft from the Drafts folder                                               |
+| `respond_to_invitation`    | Full             | Accept, tentatively accept, or decline an invitation; sends immediately           |
 
 Every tool that lists or uses messages only reaches those within the account's time window.
 Messages are addressed by a short `message_ref` (10 characters) that stays valid when the message
@@ -202,4 +211,4 @@ session. Admission is controlled by the Pocket ID client's allowed users or grou
   - **Required:** every variable marked required in [Environment Variables](#environment-variables).
     Mark `ORIGIN` as available at build time too.
   - **Optional:** `MICROSOFT_CLIENT_ID` and `MICROSOFT_CLIENT_SECRET` (Microsoft 365 accounts);
-    `BODY_SIZE_LIMIT=30M` (default `512K`) for attachments.
+    `BODY_SIZE_LIMIT=30M` (default `512K`) for attachments and MCP uploads.

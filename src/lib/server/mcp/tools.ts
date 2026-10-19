@@ -1,4 +1,5 @@
 import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
+import { detectMimeType } from 'nodemailer/lib/mime-funcs/mime-types';
 import { z } from 'zod';
 import {
 	ACCESS_LEVEL_LABELS,
@@ -18,7 +19,9 @@ import {
 	type Draft,
 	type OutgoingAttachment
 } from '../mail/compose';
+import { MCP_RESOURCE } from '../auth';
 import { parseAddressList } from '../mail/addresses';
+import { attachmentText } from '../mail/attachment-text';
 import { findMeetingTimes } from '../mail/availability';
 import { groupConversations, type Conversation } from '../mail/conversations';
 import { errorMessage, MailError } from '../mail/errors';
@@ -35,6 +38,7 @@ import {
 	conversationMembers,
 	findMessage,
 	getAttachment,
+	getAttachments,
 	getMessage,
 	getThread,
 	groupRefs,
@@ -49,6 +53,7 @@ import { baseSubject, composeBody, formatAddress, looksLikeReplySubject } from '
 import type { MailAccount } from '../mail/types';
 import { McpAccess, McpAccessError } from './access';
 import { McpRefs } from './refs';
+import { MAX_UPLOAD_BYTES, transfers } from './transfers';
 import { formatWallClock, isTimeZone, parseWallClock, zonedToUtc } from '../mail/time-zones';
 
 const INSTRUCTIONS = `Email server for the user's mail accounts (Gmail, Purelymail, Microsoft 365,
@@ -78,6 +83,12 @@ reply. compose_new_message is only for starting a brand-new conversation.
 Every sending tool takes mode "draft" or "send". Use "draft" unless the user explicitly asked to
 send; drafts appear in the account's Drafts folder for the user to review, and send_draft sends
 one later. Reading a message never marks it as read.
+
+Attachments: get_attachment returns readable content (text, images, and the text of PDF and
+Office documents) and a short-lived download_url to save the file with curl. To attach a local
+file, call create_attachment_upload, PUT the file to its upload_url, and pass {"upload_id"} in
+attachments. A file that is already in a message is attached with {"message_ref", "part_id"},
+without downloading it.
 
 Calendar invitations appear as "invitation" in get_message. Answer one with respond_to_invitation
 only when the user asked to; it sends the answer to the organizer immediately.
@@ -149,7 +160,8 @@ const MAX_BODY_CHARS = 100_000;
 const MAX_THREAD_BODY_CHARS = 20_000;
 const MAX_THREAD_MESSAGES = 30;
 const MAX_PARTICIPANTS = 10;
-const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const MAX_INLINE_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_OUTGOING_BYTES = 25 * 1024 * 1024;
 
 const messageRef = z.string().min(1).describe('A message_ref from a listing tool.');
 const timeZone = z
@@ -183,15 +195,21 @@ const mode = z
 	.describe('"draft" saves to Drafts for review (default); "send" sends immediately.');
 const attachmentInput = z
 	.array(
-		z.object({
-			filename: z.string().min(1).max(255),
-			mime_type: z.string().min(1).default('application/octet-stream'),
-			content_base64: z.string().min(1)
-		})
+		z.union([
+			z.object({
+				upload_id: z.string().min(1).describe('From create_attachment_upload, after the PUT.')
+			}),
+			z.object({
+				message_ref: messageRef,
+				part_id: z.string().min(1).describe('An attachment part_id from get_message.')
+			})
+		])
 	)
 	.max(20)
 	.optional()
-	.describe('Files to attach.');
+	.describe(
+		'Files to attach: uploaded files ({upload_id}) or attachments of other messages ({message_ref, part_id}).'
+	);
 const groupBy = z
 	.enum(['message', 'thread'])
 	.default('message')
@@ -204,14 +222,6 @@ const includePreview = z
 	.describe(
 		"A one-line preview of each message's new text, without quotes (up to 200 characters)."
 	);
-
-function attachmentsFrom(input: z.infer<typeof attachmentInput>): OutgoingAttachment[] {
-	return (input ?? []).map((a) => ({
-		filename: a.filename,
-		contentType: a.mime_type,
-		content: Buffer.from(a.content_base64, 'base64')
-	}));
-}
 
 /** The AI's plain text as HTML above the signature and quote. */
 function withBody(body: string, suffix: string): string {
@@ -237,6 +247,7 @@ function bodyOut(
 /** One server per request, holding the client's grants for that request. */
 export function createMcpServer(
 	userId: string,
+	clientId: string,
 	access: McpAccess,
 	refs: McpRefs = new McpRefs(userId)
 ): McpServer {
@@ -270,10 +281,46 @@ export function createMcpServer(
 		return (await refs.shorten([{ ref, accountId, messageId }])).get(ref)!;
 	}
 
+	/**
+	 * The files to attach, in order: uploads of this client, and attachments of messages the client
+	 * may read with their attachments.
+	 */
+	async function resolveAttachments(
+		input: z.infer<typeof attachmentInput>
+	): Promise<{ files: OutgoingAttachment[]; uploadIds: string[] }> {
+		const entries = input ?? [];
+		const uploadIds = entries.flatMap((a) => ('upload_id' in a ? [a.upload_id] : []));
+		const uploads = transfers.takeUploads({ userId, clientId }, uploadIds);
+		const parts = new Map<string, string[]>();
+		for (const a of entries) {
+			if ('message_ref' in a)
+				parts.set(a.message_ref, [...(parts.get(a.message_ref) ?? []), a.part_id]);
+		}
+		const fromMessages = new Map<string, OutgoingAttachment>();
+		for (const [shortRef, partIds] of parts) {
+			const files = await withMessage(shortRef, async (ref) => {
+				const { account, locator } = await access.requireMessage(ref, 'read', {
+					attachments: true
+				});
+				return getAttachments(account, locator, partIds);
+			});
+			partIds.forEach((partId, i) => fromMessages.set(`${shortRef} ${partId}`, files[i]));
+		}
+		let next = 0;
+		const files = entries.map((a) =>
+			'upload_id' in a ? uploads[next++] : fromMessages.get(`${a.message_ref} ${a.part_id}`)!
+		);
+		const total = files.reduce((sum, f) => sum + f.content.length, 0);
+		if (total > MAX_OUTGOING_BYTES) {
+			throw new MailError('Attachments larger than 25 MB in total cannot be sent.', 413);
+		}
+		return { files, uploadIds };
+	}
+
 	async function deliver(
 		draft: Draft,
 		how: 'draft' | 'send',
-		options: { answersRef?: string; replacesDraftRef?: string } = {}
+		options: { answersRef?: string; replacesDraftRef?: string; uploadIds?: string[] } = {}
 	) {
 		const account = accountsById.get(draft.accountId)!;
 		const recipients = {
@@ -286,6 +333,7 @@ export function createMcpServer(
 		};
 		if (how === 'draft') {
 			const ref = await saveDraft(userId, draft, options.replacesDraftRef);
+			transfers.releaseUploads(options.uploadIds ?? []);
 			return {
 				status: 'draft_saved',
 				draft_ref: await shortRefOf(ref, draft.accountId, null),
@@ -293,6 +341,7 @@ export function createMcpServer(
 			};
 		}
 		const result = await sendDraft(userId, draft, options);
+		transfers.releaseUploads(options.uploadIds ?? []);
 		return { status: 'sent', message_id: result.messageId, ...recipients };
 	}
 
@@ -783,41 +832,95 @@ export function createMcpServer(
 		{
 			title: 'Get attachment',
 			description:
-				'Returns one attachment: text files as text, images as images, other files as base64 (up to 10 MB).',
+				'Returns one attachment: its readable content (text files, images, and the text of PDF, Office, ' +
+				'and OpenDocument files) and a download_url, valid for 15 minutes, to save the file itself ' +
+				'with `curl -fo <filename> <download_url>`.',
 			inputSchema: z.object({ message_ref: messageRef, part_id: z.string().min(1) }),
 			annotations: { readOnlyHint: true }
 		},
 		({ message_ref, part_id }) =>
 			guard(async (): Promise<CallToolResult> => {
-				const file = await withMessage(message_ref, async (ref) => {
+				const { ref, file } = await withMessage(message_ref, async (ref) => {
 					const { account, locator } = await access.requireMessage(ref, 'read', {
 						attachments: true
 					});
-					return getAttachment(account, locator, part_id);
+					return { ref, file: await getAttachment(account, locator, part_id) };
 				});
-				if (file.content.length > MAX_ATTACHMENT_BYTES) {
-					return failure(`${file.filename} is larger than 10 MB and cannot be returned.`);
-				}
+				const download = transfers.createDownload({ userId, clientId, ref, partId: part_id });
 				const type = file.contentType.split(';')[0].trim().toLowerCase();
-				if (type.startsWith('text/') || /json|xml|csv|calendar/.test(type)) {
-					return { content: [{ type: 'text', text: file.content.toString('utf8') }] };
-				}
+				const info = {
+					filename: file.filename,
+					mime_type: type,
+					size: file.content.length,
+					download_url: `${MCP_RESOURCE}/files/${download.token}`,
+					expires_at: new Date(download.expiresAt).toISOString()
+				};
 				if (type.startsWith('image/')) {
 					return {
-						content: [{ type: 'image', data: file.content.toString('base64'), mimeType: type }]
+						content: [
+							{ type: 'text', text: JSON.stringify(info) },
+							...(file.content.length <= MAX_INLINE_IMAGE_BYTES
+								? [
+										{
+											type: 'image' as const,
+											data: file.content.toString('base64'),
+											mimeType: type
+										}
+									]
+								: [])
+						]
 					};
 				}
+				const text = await attachmentText(file);
+				if (text === null) return json({ ...info, readable: false });
+				const truncated = text.length > MAX_BODY_CHARS;
 				return {
 					content: [
 						{
-							type: 'resource',
-							resource: {
-								uri: `attachment:///${encodeURIComponent(file.filename)}`,
-								mimeType: type,
-								blob: file.content.toString('base64')
-							}
-						}
+							type: 'text',
+							text: JSON.stringify({ ...info, ...(truncated && { truncated: true }) })
+						},
+						{ type: 'text', text: truncated ? text.slice(0, MAX_BODY_CHARS) : text }
 					]
+				};
+			})
+	);
+
+	server.registerTool(
+		'create_attachment_upload',
+		{
+			title: 'Create attachment upload',
+			description:
+				'Creates an upload_url, valid for one hour, to send a local file as an attachment: upload it with ' +
+				'`curl -fT <file> <upload_url>`, then pass {"upload_id"} in the attachments of ' +
+				'compose_new_message, reply_to_message, or forward_message. Files are limited to 25 MB.',
+			inputSchema: z.object({
+				filename: z.string().trim().min(1).max(255).describe('The name recipients see.'),
+				mime_type: z
+					.string()
+					.min(1)
+					.optional()
+					.describe('Defaults to the type of the file name extension.')
+			})
+		},
+		({ filename, mime_type }) =>
+			guard(async () => {
+				if (!access.accounts('organize').length) {
+					throw new McpAccessError(
+						'No mail account allows this connection to write messages. The user can change this at ' +
+							'Settings → Connected apps in the webmail.'
+					);
+				}
+				const upload = transfers.createUpload(
+					{ userId, clientId },
+					{ filename, contentType: mime_type ?? detectMimeType(filename) }
+				);
+				return {
+					upload_id: upload.uploadId,
+					upload_url: `${MCP_RESOURCE}/uploads/${upload.uploadId}`,
+					method: 'PUT',
+					max_bytes: MAX_UPLOAD_BYTES,
+					expires_at: new Date(upload.expiresAt).toISOString()
 				};
 			})
 	);
@@ -901,13 +1004,14 @@ export function createMcpServer(
 				withMessage(message_ref, async (ref) => {
 					await access.requireMessage(ref, how === 'send' ? 'send' : 'organize');
 					const prepared = await prepareReply(userId, ref, reply_all);
+					const { files, uploadIds } = await resolveAttachments(attachments);
 					const draft: Draft = {
 						...prepared.draft,
 						cc: [...prepared.draft.cc, ...parseAddressList(extra_cc ?? [])],
 						html: withBody(body, prepared.suffix),
-						attachments: attachmentsFrom(attachments)
+						attachments: files
 					};
-					return deliver(draft, how, { answersRef: ref });
+					return deliver(draft, how, { answersRef: ref, uploadIds });
 				})
 			)
 	);
@@ -918,17 +1022,18 @@ export function createMcpServer(
 			title: 'Forward message',
 			description:
 				'Forwards a message with its original headers, text, and (by default) attachments under a "Fwd:" subject. ' +
-				'Accounts that withhold attachments need include_attachments set to false.',
+				'Accounts that withhold attachments need include_attachments set to false. attachments adds further files.',
 			inputSchema: z.object({
 				message_ref: messageRef,
 				to: recipientList.min(1),
 				cc: recipientList.optional(),
 				body: z.string().default('').describe('A plain-text note above the forwarded message.'),
 				include_attachments: z.boolean().default(true),
+				attachments: attachmentInput,
 				mode
 			})
 		},
-		({ message_ref, to, cc, body, include_attachments, mode: how }) =>
+		({ message_ref, to, cc, body, include_attachments, attachments, mode: how }) =>
 			guard(() =>
 				withMessage(message_ref, async (ref) => {
 					await access.requireMessage(ref, how === 'send' ? 'send' : 'organize', {
@@ -936,13 +1041,15 @@ export function createMcpServer(
 						attachmentsHint: 'Forward with include_attachments set to false instead.'
 					});
 					const prepared = await prepareForward(userId, ref, include_attachments);
+					const { files, uploadIds } = await resolveAttachments(attachments);
 					const draft: Draft = {
 						...prepared.draft,
 						to: parseAddressList(to),
 						cc: parseAddressList(cc ?? []),
-						html: withBody(body, prepared.suffix)
+						html: withBody(body, prepared.suffix),
+						attachments: [...prepared.draft.attachments, ...files]
 					};
-					return deliver(draft, how);
+					return deliver(draft, how, { uploadIds });
 				})
 			)
 	);
@@ -978,6 +1085,7 @@ export function createMcpServer(
 						400
 					);
 				}
+				const { files, uploadIds } = await resolveAttachments(attachments);
 				const draft: Draft = {
 					accountId: account.id,
 					to: parseAddressList(to),
@@ -987,9 +1095,9 @@ export function createMcpServer(
 					html: composeBody(textToComposeHtml(body), account.signature),
 					inReplyTo: null,
 					references: [],
-					attachments: attachmentsFrom(attachments)
+					attachments: files
 				};
-				return deliver(draft, how);
+				return deliver(draft, how, { uploadIds });
 			})
 	);
 

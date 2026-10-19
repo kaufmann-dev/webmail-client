@@ -16,11 +16,16 @@ export const init: ServerInit = async () => {
 	startImapReaper();
 };
 
-/** Routes reachable without a browser session. The MCP endpoint verifies OAuth access tokens. */
+/**
+ * Routes reachable without a browser session. The MCP endpoint verifies OAuth access tokens, and
+ * its attachment links carry their own short-lived tokens.
+ */
 function isPublic(pathname: string): boolean {
 	return (
 		pathname === '/login' ||
 		pathname === '/mcp' ||
+		pathname.startsWith('/mcp/files/') ||
+		pathname.startsWith('/mcp/uploads/') ||
 		pathname.startsWith('/api/auth/') ||
 		pathname.startsWith('/.well-known/')
 	);
