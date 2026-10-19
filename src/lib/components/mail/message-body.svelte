@@ -28,12 +28,13 @@ blockquote{margin:0 0 0 .5em;padding-left:.75em;border-left:2px solid #ccc}`;
 	// short of the content, and a vertical scrollbar would narrow the document, resize it, and toggle
 	// on and off with every measurement in `fit`. Wide content still scrolls horizontally; the body
 	// keeps its overflow visible, since the root's overflow no longer passes the body's to the frame.
+	// The body contains absolutely positioned content, so `fit` measures it in the body's overflow.
 	// Images shrink to the frame's width and keep their proportions, even where the message fixes
 	// their height (Outlook sets both in inline styles), which would otherwise squeeze them.
 	// This comes after the message so it wins over the message's own `!important` rules.
 	const FIT_STYLE =
 		`<style>html,body{height:auto!important;min-height:0!important;max-height:none!important}` +
-		`html{overflow-x:auto!important;overflow-y:hidden!important}body{overflow:visible!important}` +
+		`html{overflow-x:auto!important;overflow-y:hidden!important}body{position:relative!important;overflow:visible!important}` +
 		`img{max-width:100%!important;height:auto!important}</style>`;
 
 	const srcdoc = $derived(
@@ -62,11 +63,15 @@ blockquote{margin:0 0 0 .5em;padding-left:.75em;border-left:2px solid #ccc}`;
 		const frame = event.currentTarget as HTMLIFrameElement;
 		const doc = frame.contentDocument;
 		if (!doc) return;
-		// The content's own height, rounded up: `scrollHeight` rounds fractional heights (11pt fonts)
-		// down, cutting off content, and never drops below the frame, so the frame would not shrink.
+		// The content's own height, rounded up: the root's `scrollHeight` rounds fractional heights
+		// (11pt fonts) down and never drops below the frame, so the frame would not shrink. Content can
+		// reach past the root's box (wrappers with a fixed height, positioned elements), so the body's
+		// overflow counts too; it does not depend on the frame's height.
 		// The frame's border and any horizontal scrollbar come on top.
 		const resize = () => {
-			const content = Math.ceil(doc.documentElement.getBoundingClientRect().height);
+			const root = doc.documentElement.getBoundingClientRect();
+			const body = doc.body.getBoundingClientRect().top - root.top + doc.body.scrollHeight;
+			const content = Math.ceil(Math.max(root.height, body));
 			frame.style.height = `${content + frame.offsetHeight - doc.documentElement.clientHeight}px`;
 		};
 		observer?.disconnect();
