@@ -57,7 +57,9 @@ blockquote{margin:0 0 0 .5em;padding-left:.75em;border-left:2px solid #ccc}`;
 		const frame = event.currentTarget as HTMLIFrameElement;
 		const doc = frame.contentDocument;
 		if (!doc) return;
-		const resize = () => (frame.style.height = `${doc.documentElement.scrollHeight}px`);
+		// The height includes the frame's border (border-box), so the border is added on top.
+		const resize = () =>
+			(frame.style.height = `${doc.documentElement.scrollHeight + frame.offsetHeight - frame.clientHeight}px`);
 		observer?.disconnect();
 		observer = new ResizeObserver(resize);
 		observer.observe(doc.documentElement);
