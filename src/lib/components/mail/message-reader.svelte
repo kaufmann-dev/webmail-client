@@ -258,7 +258,10 @@
 				<InvitationCard invitation={detail.invitation} {onrespond} />
 			{/if}
 
-			<MessageBody html={detail.html} {allowRemote} />
+			<!-- An invitation or answer without a note shows only its card, not an empty frame. -->
+			{#if !detail.invitation || detail.text}
+				<MessageBody html={detail.html} {allowRemote} />
+			{/if}
 
 			{#if detail.attachments.length}
 				<section aria-labelledby="attachments-heading" class="flex flex-col gap-2">
