@@ -873,6 +873,13 @@ export function createMcpServer(
 				}
 				const text = await attachmentText(file);
 				if (text === null) return json({ ...info, readable: false });
+				if (text === '') {
+					return json({
+						...info,
+						readable: false,
+						hint: 'The document has no text layer; it is probably scanned. Download it and read its pages as images.'
+					});
+				}
 				const truncated = text.length > MAX_BODY_CHARS;
 				return {
 					content: [

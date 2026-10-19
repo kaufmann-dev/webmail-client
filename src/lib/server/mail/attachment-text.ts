@@ -4,7 +4,8 @@ import type { SupportedFileType } from 'officeparser';
 /**
  * Attachments as text for AI clients: plain text as it is, and documents (PDF, Office,
  * OpenDocument, RTF, HTML, EPUB) as Markdown, which keeps headings and tables. Anything else, or a
- * document that cannot be parsed, has no text.
+ * document that cannot be parsed, has no text (null). A document without a text layer, such as a
+ * scanned PDF, has empty text.
  */
 
 const MAX_PARSED_BYTES = 25 * 1024 * 1024;
@@ -82,10 +83,12 @@ export async function attachmentText(file: {
 		const { value } = await ast.to('md');
 		// The YAML front matter only holds document metadata such as creation dates, and a page
 		// break (`---`) comes before the first page too.
-		return value
+		const text = value
 			.replace(/^---\n[\s\S]*?\n---\n+/, '')
 			.replace(/^(?:---\s*\n)+/, '')
 			.trim();
+		// Only page breaks and punctuation left: the pages are images.
+		return /[\p{L}\p{N}]/u.test(text) ? text : '';
 	} catch {
 		return null;
 	}

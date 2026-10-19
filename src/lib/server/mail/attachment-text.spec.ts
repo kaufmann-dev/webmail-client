@@ -1,15 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { attachmentKind, attachmentText } from './attachment-text';
 
-/** A one-page PDF showing "Hello PDF", with a valid cross-reference table. */
-function minimalPdf(): Buffer {
-	const stream = 'BT /F1 24 Tf 72 720 Td (Hello PDF) Tj ET';
+/** A PDF of two identical pages with the given content stream, and a valid cross-reference table. */
+function minimalPdf(stream = 'BT /F1 24 Tf 72 720 Td (Hello PDF) Tj ET'): Buffer {
+	const page =
+		'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>';
 	const objects = [
 		'<< /Type /Catalog /Pages 2 0 R >>',
-		'<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-		'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+		'<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>',
+		page,
 		`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
-		'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'
+		'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+		page
 	];
 	let pdf = '%PDF-1.4\n';
 	const offsets: number[] = [];
@@ -62,6 +64,15 @@ describe('attachmentText', () => {
 		});
 		expect(text).toContain('Hello PDF');
 		expect(text).not.toMatch(/^---/);
+	});
+
+	it('has empty text for a PDF whose pages have no text layer', async () => {
+		const text = await attachmentText({
+			filename: 'scan.pdf',
+			contentType: 'application/pdf',
+			content: minimalPdf('')
+		});
+		expect(text).toBe('');
 	});
 
 	it('has no text for unknown binaries or unreadable documents', async () => {

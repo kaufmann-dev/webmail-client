@@ -131,7 +131,8 @@ shows these steps with copyable commands for the deployed URL.
   both on every tool call.
 - **Attachments:** `get_attachment` returns readable content (text files, images, and the text of
   PDF, Office, and OpenDocument files as Markdown) and a download link valid for 15 minutes, so
-  agents with a shell save the file with `curl` instead of reading base64. To send a local file,
+  agents with a shell save the file with `curl` instead of reading base64. Scanned documents
+  without a text layer come back as unreadable, with a hint to download them and read the pages. To send a local file,
   `create_attachment_upload` returns an upload link valid for one hour (`curl -T`, up to 25 MB);
   the sending tools then take `{upload_id}`, or `{message_ref, part_id}` to attach a file from
   another message without downloading it. Links are kept in memory only, bound to the user and
