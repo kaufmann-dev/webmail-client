@@ -1,4 +1,6 @@
 <script lang="ts">
+	import ImageViewer from '#lib/components/mail/image-viewer.svelte';
+
 	let { html, allowRemote }: { html: string; allowRemote: boolean } = $props();
 
 	// No scripts ever run: the sandbox omits allow-scripts and the CSP has no script-src. Remote
@@ -16,6 +18,7 @@
 	const BASE_STYLE = `html,body{margin:0;background:#fff;color:#111}
 body{padding:16px;font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;overflow-wrap:anywhere}
 pre{white-space:pre-wrap}
+img{cursor:zoom-in}a img{cursor:pointer}
 blockquote{margin:0 0 0 .5em;padding-left:.75em;border-left:2px solid #ccc}`;
 
 	// The frame takes the document's height, so the document must take its content's height. Emails
@@ -36,6 +39,18 @@ blockquote{margin:0 0 0 .5em;padding-left:.75em;border-left:2px solid #ccc}`;
 	);
 
 	let observer: ResizeObserver | undefined;
+	let viewing = $state<{ src: string; alt: string } | null>(null);
+
+	/**
+	 * A click on an image opens it large outside the frame. Linked images keep their link, and images
+	 * that did not load (blocked by the frame's CSP) stay closed, so the viewer loads nothing new.
+	 */
+	function open(event: MouseEvent) {
+		const img = (event.target as Element).closest('img');
+		if (!img || img.closest('a') || !img.complete || img.naturalWidth === 0) return;
+		event.preventDefault();
+		viewing = { src: img.currentSrc || img.src, alt: img.alt };
+	}
 
 	/** Same-origin access (allow-same-origin, no scripts) lets the parent size the frame to its content. */
 	function fit(event: Event) {
@@ -47,6 +62,7 @@ blockquote{margin:0 0 0 .5em;padding-left:.75em;border-left:2px solid #ccc}`;
 		observer = new ResizeObserver(resize);
 		observer.observe(doc.documentElement);
 		resize();
+		doc.addEventListener('click', open);
 	}
 </script>
 
@@ -60,3 +76,7 @@ blockquote{margin:0 0 0 .5em;padding-left:.75em;border-left:2px solid #ccc}`;
 	onload={fit}
 	class="block min-h-24 w-full rounded-lg border bg-white scheme-light"
 ></iframe>
+
+{#if viewing}
+	<ImageViewer {...viewing} onclose={() => (viewing = null)} />
+{/if}
