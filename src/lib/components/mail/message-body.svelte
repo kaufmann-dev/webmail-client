@@ -15,14 +15,18 @@
 
 	const BASE_STYLE = `html,body{margin:0;background:#fff;color:#111}
 body{padding:16px;font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;overflow-wrap:anywhere}
-img{max-width:100%;height:auto}pre{white-space:pre-wrap}
+pre{white-space:pre-wrap}
 blockquote{margin:0 0 0 .5em;padding-left:.75em;border-left:2px solid #ccc}`;
 
 	// The frame takes the document's height, so the document must take its content's height. Emails
 	// often set `html, body { height: 100% }` (sometimes with `overflow: hidden`), which ties the
 	// document to the frame instead: the frame stays at its default height or grows without end.
+	// Images shrink to the frame's width and keep their proportions, even where the message fixes
+	// their height (Outlook sets both in inline styles), which would otherwise squeeze them.
 	// This comes after the message so it wins over the message's own `!important` rules.
-	const FIT_STYLE = `<style>html,body{height:auto!important;min-height:0!important;max-height:none!important;overflow:visible!important}</style>`;
+	const FIT_STYLE =
+		`<style>html,body{height:auto!important;min-height:0!important;max-height:none!important;overflow:visible!important}` +
+		`img{max-width:100%!important;height:auto!important}</style>`;
 
 	const srcdoc = $derived(
 		`<!doctype html><html><head><meta charset="utf-8">` +
