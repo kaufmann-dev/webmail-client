@@ -59,10 +59,19 @@ blockquote{margin:0 0 0 .5em;padding-left:.75em;border-left:2px solid #ccc}`;
 		if (!doc) return;
 		// The content's own height, rounded up: `scrollHeight` rounds fractional heights (11pt fonts)
 		// down, leaving a scrollbar, and never drops below the frame, so the frame would not shrink.
-		// The frame's border and any horizontal scrollbar come on top.
+		// The frame's border and any horizontal scrollbar come on top. The border is read from its
+		// computed style: at fractional scales (1.65) it snaps to device pixels, and deriving it from
+		// rounded sizes gives a different result with and without the vertical scrollbar, so the frame
+		// toggled between two heights.
 		const resize = () => {
-			const content = Math.ceil(doc.documentElement.getBoundingClientRect().height);
-			frame.style.height = `${content + frame.offsetHeight - doc.documentElement.clientHeight}px`;
+			const root = doc.documentElement;
+			const style = getComputedStyle(frame);
+			const border = parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
+			const scrollbar =
+				root.scrollWidth > root.clientWidth
+					? frame.contentWindow!.innerHeight - root.clientHeight
+					: 0;
+			frame.style.height = `${Math.ceil(root.getBoundingClientRect().height + border) + scrollbar}px`;
 		};
 		observer?.disconnect();
 		observer = new ResizeObserver(resize);
