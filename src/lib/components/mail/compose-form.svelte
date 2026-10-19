@@ -28,7 +28,7 @@
 		ComposeState,
 		MeetingTimes
 	} from '#lib/mail-types.js';
-	import { followSend, takeUnsent } from '#lib/outbox.js';
+	import { followSend, leavingDrafts, takeUnsent } from '#lib/outbox.js';
 
 	let { initial: props, accounts }: { initial: ComposeState; accounts: AccountSummary[] } =
 		$props();
@@ -199,10 +199,15 @@
 		pending = 'close';
 		leave();
 		if (kind === 'discard') {
+			const ref = draftRef;
+			if (ref) leavingDrafts.add(ref);
 			toast.success('Draft discarded');
 			return async ({ result }) => {
 				if (result.type === 'success') invalidate('mail:list');
-				else toast.error(`The draft was not discarded: ${failure(result)}`);
+				else {
+					if (ref) leavingDrafts.delete(ref);
+					toast.error(`The draft was not discarded: ${failure(result)}`);
+				}
 			};
 		}
 		const finish = followSend({

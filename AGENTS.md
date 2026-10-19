@@ -149,7 +149,8 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
 - User actions show their result at once and finish in the background (`postAction` in
   `src/lib/form-action.ts`); a failure undoes the change and shows a toast. Sending continues after
   the editor closes (`src/lib/outbox.ts`), so closing it never leaves the page load: going back past
-  it would unload the document and cancel the send.
+  it would unload the document and cancel the send. Drafts being sent or discarded leave lists at
+  once (`leavingDrafts`) and come back if that fails.
 - The open message streams from the page load, which must stay free of side effects because links
   preload on tap (not hover, which would queue reads ahead of the click) and the next message
   preloads after one opens. The page marks a message read once it is shown.

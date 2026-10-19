@@ -1,5 +1,6 @@
 import { goto, invalidate } from '$app/navigation';
 import { resolve } from '$app/paths';
+import { SvelteSet } from 'svelte/reactivity';
 import { toast } from 'svelte-sonner';
 import type { ComposeState } from './mail-types';
 
@@ -8,6 +9,12 @@ export interface OutgoingMessage {
 	state: ComposeState;
 	files: File[];
 }
+
+/**
+ * Refs of drafts being sent or discarded from the editor. Lists hide them at once, since the
+ * draft is deleted only after the send finishes; a failure shows them again.
+ */
+export const leavingDrafts = new SvelteSet<string>();
 
 /** Messages whose send failed, kept in memory until the editor reopens them. */
 const failed = new Map<string, OutgoingMessage>();
@@ -24,6 +31,8 @@ function confirmUnload(event: BeforeUnloadEvent) {
  */
 export function followSend(message: OutgoingMessage): (error: string | null) => void {
 	const id = toast.loading('Sending…');
+	const draftRef = message.state.replacesDraftRef;
+	if (draftRef) leavingDrafts.add(draftRef);
 	if (sending++ === 0) window.addEventListener('beforeunload', confirmUnload);
 	return (error) => {
 		if (--sending === 0) window.removeEventListener('beforeunload', confirmUnload);
@@ -32,6 +41,7 @@ export function followSend(message: OutgoingMessage): (error: string | null) => 
 			invalidate('mail:list');
 			return;
 		}
+		if (draftRef) leavingDrafts.delete(draftRef);
 		const key = crypto.randomUUID();
 		failed.set(key, message);
 		toast.error(error, {

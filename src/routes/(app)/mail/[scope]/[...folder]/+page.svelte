@@ -39,6 +39,7 @@
 		type MessageSummary
 	} from '#lib/mail-types.js';
 	import { canMoveTo, moveDestinations, type MoveDestination } from '#lib/move-targets.js';
+	import { leavingDrafts } from '#lib/outbox.js';
 
 	let { data } = $props();
 
@@ -172,7 +173,9 @@
 	const messages = $derived.by(() => {
 		const applied = unsettled(listSerial);
 		const gone = new Set(applied.filter((c) => c.remove).flatMap((c) => [...c.refs]));
-		return loaded.filter((m) => !gone.has(m.ref)).map((m) => withFlags(m, applied));
+		return loaded
+			.filter((m) => !gone.has(m.ref) && !leavingDrafts.has(m.ref))
+			.map((m) => withFlags(m, applied));
 	});
 
 	const unread = $derived.by(() => {
