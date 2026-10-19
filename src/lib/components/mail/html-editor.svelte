@@ -87,10 +87,11 @@
 	// The document runs no scripts (sandbox without allow-scripts) and loads nothing from the web
 	// while editing; remote images stay in the markup and are sent with the message.
 	const CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data: blob:";
+	// `!important` keeps quoted images in proportion where they fix their height inline (Outlook).
 	const STYLE = `html{background:#fff}
 body{margin:0;padding:12px 14px;color:#111;font:14px/1.4 system-ui,-apple-system,'Segoe UI',sans-serif;overflow-wrap:anywhere}
 body:focus{outline:none}
-img{max-width:100%;height:auto}
+img{max-width:100%!important;height:auto!important}
 a{color:#1a56c4}`;
 	const srcdoc =
 		`<!doctype html><html><head><meta charset="utf-8">` +
