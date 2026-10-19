@@ -57,9 +57,13 @@ blockquote{margin:0 0 0 .5em;padding-left:.75em;border-left:2px solid #ccc}`;
 		const frame = event.currentTarget as HTMLIFrameElement;
 		const doc = frame.contentDocument;
 		if (!doc) return;
-		// The height includes the frame's border (border-box), so the border is added on top.
-		const resize = () =>
-			(frame.style.height = `${doc.documentElement.scrollHeight + frame.offsetHeight - frame.clientHeight}px`);
+		// The content's own height, rounded up: `scrollHeight` rounds fractional heights (11pt fonts)
+		// down, leaving a scrollbar, and never drops below the frame, so the frame would not shrink.
+		// The frame's border and any horizontal scrollbar come on top.
+		const resize = () => {
+			const content = Math.ceil(doc.documentElement.getBoundingClientRect().height);
+			frame.style.height = `${content + frame.offsetHeight - doc.documentElement.clientHeight}px`;
+		};
 		observer?.disconnect();
 		observer = new ResizeObserver(resize);
 		observer.observe(doc.documentElement);
