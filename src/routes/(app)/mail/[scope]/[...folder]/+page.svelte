@@ -40,20 +40,26 @@
 	} from '#lib/mail-types.js';
 	import { canMoveTo, moveDestinations, type MoveDestination } from '#lib/move-targets.js';
 	import { leavingDrafts } from '#lib/outbox.js';
+	import { streamed } from '#lib/streamed.svelte.js';
 
 	let { data } = $props();
 
-	// Held as stable references: opening a message replaces `data` but not these.
-	const list = $derived(data.list);
-	const serverUnread = $derived(data.unread);
+	// Held as stable references: opening a message replaces `data` but not these. The first page
+	// streams them in.
+	const listData = $derived(streamed(data.list));
+	const list = $derived(listData.current);
+	const foldersData = $derived(streamed(data.folders));
+	const folders = $derived(foldersData.current ?? {});
+	const unreadData = $derived(streamed(data.unread));
+	const serverUnread = $derived(unreadData.current ?? {});
 	const opened = $derived(data.message);
 
 	const accountsById = $derived(new Map(data.accounts.map((a) => [a.id, a])));
-	const role = $derived(viewedRole(data.scope, data.folder, data.folders));
+	const role = $derived(viewedRole(data.scope, data.folder, folders));
 	const title = $derived.by(() => {
 		const folderName = role
 			? FOLDER_ROLE_LABELS[role]
-			: (data.folders[data.scope]?.find((f) => f.path === data.folder)?.name ?? data.folder);
+			: (folders[data.scope]?.find((f) => f.path === data.folder)?.name ?? data.folder);
 		const ids = scopeIds(data.scope);
 		const scopeName = !ids
 			? 'All accounts'
@@ -74,8 +80,8 @@
 	});
 
 	// Reset whenever the server sends a fresh list; "Load more" appends locally.
-	let loaded = $derived(list.messages);
-	let cursor = $derived(list.nextCursor);
+	let loaded = $derived(list?.messages ?? []);
+	let cursor = $derived(list?.nextCursor ?? null);
 	// The selection survives refreshes of the same list and resets in another folder, filter, or search.
 	const listKey = $derived(JSON.stringify([data.scope, data.folder, data.filter, data.query]));
 	let picked = $derived.by(() => {
@@ -150,7 +156,7 @@
 		if (
 			request.kind !== 'create' &&
 			data.scope === request.accountId &&
-			isWithin(data.folder, request.folder, data.folders[data.scope] ?? [])
+			isWithin(data.folder, request.folder, folders[data.scope] ?? [])
 		) {
 			const folder =
 				request.kind === 'rename'
@@ -334,7 +340,7 @@
 		const wanted = new Set(refs);
 		return new Set(messages.filter((m) => wanted.has(m.ref)).map((m) => m.accountId));
 	};
-	const selectedDestinations = $derived(moveDestinations(data.folders, accountsOf(selected), view));
+	const selectedDestinations = $derived(moveDestinations(folders, accountsOf(selected), view));
 
 	// Messages dragged onto a sidebar folder move there.
 	let dragging = $state<string[] | null>(null);
@@ -373,7 +379,7 @@
 			const scope = index === 0 ? 'all' : data.accounts[index - 1]?.id;
 			if (!scope || scope === data.scope) return;
 			event.preventDefault();
-			const folder = switchedFolder(role, scope, data.folders);
+			const folder = switchedFolder(role, scope, folders);
 			goto(resolve('/(app)/mail/[scope]/[...folder]', { scope, folder }));
 			return;
 		}
@@ -452,7 +458,8 @@
 {#snippet sidebar(onnavigate?: () => void)}
 	<MailSidebar
 		accounts={data.accounts}
-		folders={data.folders}
+		{folders}
+		loading={!foldersData.current}
 		{unread}
 		scope={activeScope}
 		folder={activeFolder}
@@ -470,7 +477,7 @@
 	<MessageReader
 		{message}
 		account={singleAccount(data.scope) ? undefined : accountsById.get(message.accountId)}
-		destinations={moveDestinations(data.folders, new Set([message.accountId]), view)}
+		destinations={moveDestinations(folders, new Set([message.accountId]), view)}
 		{role}
 		{closeHref}
 		{hrefFor}
@@ -656,7 +663,7 @@
 		</div>
 
 		<div class="relative min-h-0 flex-1 overflow-y-auto">
-			{#each data.list.errors as failure (failure.accountId)}
+			{#each list?.errors ?? [] as failure (failure.accountId)}
 				<p class="border-b bg-muted px-3 py-2 text-sm wrap-anywhere" role="status">
 					{failure.message}
 				</p>
@@ -669,6 +676,10 @@
 					</p>
 					<Button href={resolve('/(app)/settings/accounts/new')}>Add account</Button>
 				</div>
+			{:else if listData.failed}
+				<p class="p-6 text-sm">The messages could not be loaded.</p>
+			{:else if !list}
+				<div class="flex p-6"><Spinner aria-label="Loading messages" class="m-auto" /></div>
 			{:else if !messages.length}
 				<p class="p-6 text-sm text-muted-foreground">
 					{data.query

@@ -12,6 +12,7 @@
 	import type { FolderRequest } from '#lib/components/mail/folder-dialog.svelte';
 	import TooltipButton from '#lib/components/tooltip-button.svelte';
 	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
+	import { Spinner } from '#lib/components/ui/spinner/index.js';
 	import { visibleTree, type TreeRow } from '#lib/folder-tree.js';
 	import { scopeAccountIds, singleAccount, switchedFolder, viewedRole } from '#lib/mail-scope.js';
 	import { FOLDER_ROLES, FOLDER_ROLE_LABELS, type AccountSummary } from '#lib/mail-types.js';
@@ -20,6 +21,7 @@
 	let {
 		accounts,
 		folders,
+		loading = false,
 		unread,
 		scope,
 		folder,
@@ -30,6 +32,8 @@
 	}: {
 		accounts: AccountSummary[];
 		folders: Record<string, FolderEntry[]>;
+		/** While the folders are still on their way. */
+		loading?: boolean;
 		unread: Record<string, number | null>;
 		scope: string;
 		folder: string;
@@ -273,6 +277,8 @@
 					{/each}
 				</div>
 			{/if}
+		{:else if loading}
+			<Spinner aria-label="Loading folders" class="mx-2" />
 		{:else}
 			<p class="px-2 text-sm text-muted-foreground">
 				The folders could not be loaded.

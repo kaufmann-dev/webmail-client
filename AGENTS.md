@@ -161,5 +161,8 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
 - The open message streams from the page load, which must stay free of side effects because links
   preload on tap (not hover, which would queue reads ahead of the click) and the next message
   preloads after one opens. The page marks a message read once it is shown.
+- The first document load also streams the message list, folders, and unread counts (`streamed` in
+  `src/lib/streamed.svelte.ts`), so the shell shows at once. Data requests (navigations and
+  refreshes) await them instead, keeping the current view until the next one is ready.
 - Every `overflow-y-auto` scroll area is also `relative`. Otherwise `sr-only` labels inside it
   (absolutely positioned) are placed against the page and stretch it past the `h-dvh` shell.
