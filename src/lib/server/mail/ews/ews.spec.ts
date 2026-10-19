@@ -277,6 +277,10 @@ describe('requests', () => {
 });
 
 describe('meetings', () => {
+	it('deletes calendar items in Drafts without notifying anyone', () => {
+		expect(request.deleteItems(['A1'])).toContain('SendMeetingCancellations="SendToNone"');
+	});
+
 	it('escapes the calendar item and keeps the schema order', () => {
 		const body = request.createMeeting({
 			subject: 'Budget & plans',

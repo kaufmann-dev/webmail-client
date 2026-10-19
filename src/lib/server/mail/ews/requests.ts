@@ -298,8 +298,15 @@ export function moveItems(ids: string[], folder: string): string {
 	);
 }
 
+/**
+ * Deletes items for good. Exchange requires `SendMeetingCancellations` for calendar items, such
+ * as the unsent meetings Outlook keeps in Drafts; deleting one never notifies attendees.
+ */
 export function deleteItems(ids: string[]): string {
-	return `<m:DeleteItem DeleteType="HardDelete"><m:ItemIds>${itemIds(ids)}</m:ItemIds></m:DeleteItem>`;
+	return (
+		'<m:DeleteItem DeleteType="HardDelete" SendMeetingCancellations="SendToNone">' +
+		`<m:ItemIds>${itemIds(ids)}</m:ItemIds></m:DeleteItem>`
+	);
 }
 
 /** The items of conversations outside Deleted Items and Junk, one response message each. */
