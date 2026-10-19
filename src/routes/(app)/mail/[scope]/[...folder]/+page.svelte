@@ -30,7 +30,7 @@
 	import { Spinner } from '#lib/components/ui/spinner/index.js';
 	import { isWithin, renamedPath } from '#lib/folder-tree.js';
 	import { postAction } from '#lib/form-action.js';
-	import { switchedFolder, viewedRole } from '#lib/mail-scope.js';
+	import { scopeIds, singleAccount, switchedFolder, viewedRole } from '#lib/mail-scope.js';
 	import {
 		FOLDER_ROLE_LABELS,
 		LIST_FILTERS,
@@ -54,7 +54,12 @@
 		const folderName = role
 			? FOLDER_ROLE_LABELS[role]
 			: (data.folders[data.scope]?.find((f) => f.path === data.folder)?.name ?? data.folder);
-		const scopeName = data.scope === 'all' ? 'All accounts' : accountsById.get(data.scope)?.label;
+		const ids = scopeIds(data.scope);
+		const scopeName = !ids
+			? 'All accounts'
+			: ids.length > 1
+				? `${ids.length} accounts`
+				: accountsById.get(ids[0])?.label;
 		return `${folderName} · ${scopeName ?? ''}`;
 	});
 
@@ -464,7 +469,7 @@
 {#snippet reader(message: MessageSummary | MessageDetail)}
 	<MessageReader
 		{message}
-		account={data.scope === 'all' ? accountsById.get(message.accountId) : undefined}
+		account={singleAccount(data.scope) ? undefined : accountsById.get(message.accountId)}
 		destinations={moveDestinations(data.folders, new Set([message.accountId]), view)}
 		{role}
 		{closeHref}
@@ -679,7 +684,7 @@
 					openRef={shownRef}
 					{selected}
 					onselectionchange={(next) => (picked = next)}
-					showAccount={data.scope === 'all'}
+					showAccount={!singleAccount(data.scope)}
 					showRecipient={role === 'sent' || role === 'drafts'}
 					{hrefFor}
 					ondragstart={(refs) => (dragging = refs)}

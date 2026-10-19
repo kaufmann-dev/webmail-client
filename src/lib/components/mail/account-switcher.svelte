@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { DropdownMenu as DropdownMenuPrimitive } from 'bits-ui';
+	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import AlertTriangle from '@lucide/svelte/icons/triangle-alert';
 	import Check from '@lucide/svelte/icons/check';
@@ -8,6 +10,7 @@
 	import Settings from '@lucide/svelte/icons/settings';
 	import AccountSwatch from '#lib/components/account-swatch.svelte';
 	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
+	import { scopeAccountIds, singleAccount, toggledScope } from '#lib/mail-scope.js';
 	import { PROVIDER_LABELS, type AccountSummary } from '#lib/mail-types.js';
 
 	let {
@@ -18,19 +21,22 @@
 	}: {
 		accounts: AccountSummary[];
 		unread: Record<string, number | null>;
-		/** `all`, or the ID of the account being viewed. */
+		/** `all`, or the IDs of the accounts being viewed (see `mail-scope.ts`). */
 		scope: string;
 		/** Where switching to a scope leads. */
 		hrefFor: (scope: string) => string;
 	} = $props();
 
-	const current = $derived(accounts.find((account) => account.id === scope) ?? null);
+	const current = $derived(accounts.find((account) => account.id === singleAccount(scope)) ?? null);
+	const selected = $derived(new Set(scopeAccountIds(scope, accounts)));
+	/** The accounts of a combined view; empty for all accounts or one. */
+	const combined = $derived(
+		scope !== 'all' && !current ? accounts.filter((a) => selected.has(a.id)) : []
+	);
 	const totalUnread = $derived(
 		Object.values(unread).reduce<number>((sum, count) => sum + (count ?? 0), 0)
 	);
-	const failing = $derived(
-		current ? current.lastError !== null : accounts.some((a) => a.lastError !== null)
-	);
+	const failing = $derived(accounts.some((a) => selected.has(a.id) && a.lastError !== null));
 
 	/** The second line: the address, unless the label already is the address. */
 	function detail(account: AccountSummary): string {
@@ -50,7 +56,7 @@
 
 {#snippet option(account: AccountSummary | null)}
 	{@const id = account?.id ?? 'all'}
-	{@const active = scope === id}
+	{@const active = !account && scope === 'all'}
 	{@const count = account ? unread[account.id] : totalUnread}
 	<DropdownMenu.Item class="items-start">
 		{#snippet child({ props })}
@@ -63,7 +69,7 @@
 			>
 				<span class="flex h-5 items-center">{@render mark(account)}</span>
 				<span class="flex min-w-0 flex-1 flex-col">
-					<span class={['truncate', active && 'font-medium']}>
+					<span class={['truncate', (active || current === account) && 'font-medium']}>
 						{account?.label ?? 'All accounts'}
 					</span>
 					{#if account && account.label !== account.email}
@@ -80,11 +86,36 @@
 							{count}<span class="sr-only"> unread</span>
 						</span>
 					{/if}
-					<Check class={['size-4', !active && 'invisible']} />
+					{#if !account}
+						<Check class={['size-4', !active && 'invisible']} />
+					{/if}
 				</span>
 			</a>
 		{/snippet}
 	</DropdownMenu.Item>
+{/snippet}
+
+<!-- Ticking accounts combines them into one view; the menu stays open to tick several. -->
+{#snippet include(account: AccountSummary)}
+	{@const checked = selected.has(account.id)}
+	<DropdownMenuPrimitive.CheckboxItem
+		{checked}
+		closeOnSelect={false}
+		disabled={checked && selected.size === 1}
+		aria-label="Include {account.label} in view"
+		onCheckedChange={() =>
+			goto(hrefFor(toggledScope(scope, account.id, accounts)), { reset: false })}
+		class="flex h-8 shrink-0 items-center rounded-xl px-2 outline-hidden select-none focus:bg-accent data-disabled:opacity-50"
+	>
+		<span
+			class={[
+				'flex size-4 items-center justify-center rounded-[5px]',
+				checked ? 'bg-primary text-primary-foreground' : 'bg-input'
+			]}
+		>
+			{#if checked}<Check class="size-3.5" />{/if}
+		</span>
+	</DropdownMenuPrimitive.CheckboxItem>
 {/snippet}
 
 <DropdownMenu.Root>
@@ -98,13 +129,19 @@
 				{@render mark(current)}
 				<span
 					class="flex min-w-0 flex-1 flex-col"
-					title={current ? `${current.label}\n${current.email}` : undefined}
+					title={current
+						? `${current.label}\n${current.email}`
+						: combined.map((a) => a.label).join('\n') || undefined}
 				>
 					<span class="sr-only">Switch account. Showing</span>
-					<span class="truncate text-sm font-medium">{current?.label ?? 'All accounts'}</span>
+					<span class="truncate text-sm font-medium">
+						{current?.label ?? (combined.length ? `${combined.length} accounts` : 'All accounts')}
+					</span>
 					<span class="truncate text-xs text-muted-foreground">
 						{#if current}
 							{detail(current)}
+						{:else if combined.length}
+							{combined.map((a) => a.label).join(', ')}
 						{:else}
 							{accounts.length === 1 ? '1 account' : `${accounts.length} accounts`}
 						{/if}
@@ -125,7 +162,14 @@
 		<DropdownMenu.Separator />
 		<DropdownMenu.Group aria-label="Accounts">
 			{#each accounts as account (account.id)}
-				{@render option(account)}
+				{#if accounts.length > 1}
+					<div class="flex items-start">
+						{@render include(account)}
+						<div class="min-w-0 flex-1">{@render option(account)}</div>
+					</div>
+				{:else}
+					{@render option(account)}
+				{/if}
 			{/each}
 		</DropdownMenu.Group>
 		<DropdownMenu.Separator />

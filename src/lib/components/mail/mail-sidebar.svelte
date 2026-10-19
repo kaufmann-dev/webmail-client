@@ -13,7 +13,7 @@
 	import TooltipButton from '#lib/components/tooltip-button.svelte';
 	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
 	import { visibleTree, type TreeRow } from '#lib/folder-tree.js';
-	import { switchedFolder, viewedRole } from '#lib/mail-scope.js';
+	import { scopeAccountIds, singleAccount, switchedFolder, viewedRole } from '#lib/mail-scope.js';
 	import { FOLDER_ROLES, FOLDER_ROLE_LABELS, type AccountSummary } from '#lib/mail-types.js';
 	import { folderDestination, type FolderEntry, type MoveDestination } from '#lib/move-targets.js';
 
@@ -103,13 +103,13 @@
 		};
 	}
 
-	const account = $derived(accounts.find((a) => a.id === scope) ?? null);
+	const account = $derived(accounts.find((a) => a.id === singleAccount(scope)) ?? null);
 	const role = $derived(viewedRole(scope, folder, folders));
 	const totalUnread = $derived(
-		Object.values(unread).reduce<number>((sum, count) => sum + (count ?? 0), 0)
+		scopeAccountIds(scope, accounts).reduce((sum, id) => sum + (unread[id] ?? 0), 0)
 	);
 
-	/** The folders of the chosen view: the shared roles across all accounts, or one account's own. */
+	/** The folders of the chosen view: the shared roles across its accounts, or one account's own. */
 	const links = $derived.by((): FolderLink[] => {
 		if (!account) {
 			return FOLDER_ROLES.map((key) => ({

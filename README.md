@@ -11,7 +11,8 @@ and on the consent screen you choose which mail accounts each app may use and at
 
 - **Mail:** an account switcher at the top of the sidebar picks "All accounts" (a unified Inbox,
   Drafts, Sent, Archive, Spam, and Trash) or one address, and the sidebar then lists only that
-  view's folders. Switching keeps the kind of folder you are in, and `0`–`9` switch from the
+  view's folders. Ticking the boxes next to the addresses combines just those accounts into one
+  unified view (`/mail/<id>+<id>/inbox`). Switching keeps the kind of folder you are in, and `0`–`9` switch from the
   keyboard. Lists are grouped by date (Today, Yesterday, This week, Last week, then by month).
   Also search (Gmail search syntax for Gmail), unread and starred filters, multi-select
   actions, moving messages by dragging them onto a folder, creating, renaming, and deleting an

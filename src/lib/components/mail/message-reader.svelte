@@ -41,7 +41,7 @@
 	}: {
 		/** A listed summary shows the header and toolbar while the full message loads. */
 		message: MessageSummary | MessageDetail;
-		/** Passed in the all-accounts view only; a single account's view already names it. */
+		/** Passed in views of several accounts only; a single account's view already names it. */
 		account: AccountSummary | undefined;
 		destinations: MoveDestination[];
 		/** Role of the folder being viewed, which decides Trash vs. Delete forever and Spam vs. Not spam. */
