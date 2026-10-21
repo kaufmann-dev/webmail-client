@@ -91,6 +91,7 @@
 	const STYLE = `html{background:#fff}
 body{margin:0;padding:12px 14px;color:#111;font:14px/1.4 system-ui,-apple-system,'Segoe UI',sans-serif;overflow-wrap:anywhere}
 body:focus{outline:none}
+pre{white-space:pre-wrap}
 img{max-width:100%!important;height:auto!important}
 a{color:#1a56c4}`;
 	const srcdoc =
@@ -279,8 +280,15 @@ a{color:#1a56c4}`;
 			d.addEventListener('drop', ondrop);
 			d.addEventListener('keydown', onkeydown);
 			d.addEventListener('mousedown', onmousedown);
-			const resize = () =>
-				(element.style.height = `${Math.max(minHeight, Math.ceil(d.body.getBoundingClientRect().height))}px`);
+			// Content still wider than the frame (wide tables) adds a horizontal scrollbar on top.
+			const resize = () => {
+				const root = d.documentElement;
+				const scrollbar =
+					root.scrollWidth > root.clientWidth
+						? element.contentWindow!.innerHeight - root.clientHeight
+						: 0;
+				element.style.height = `${Math.max(minHeight, Math.ceil(d.body.getBoundingClientRect().height) + scrollbar)}px`;
+			};
 			observer = new ResizeObserver(resize);
 			observer.observe(d.body);
 			resize();
