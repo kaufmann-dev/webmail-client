@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { MailError } from '../errors';
 import { decodeMessageRef } from '../message-ref';
 import { check, failed, operationResponse, responseMessages } from './client';
-import { availabilityOf } from './calendar';
+import { availabilityOf, organizedMeetingOf } from './calendar';
 import { buildFolders } from './folders';
 import { attachmentIdOf, attachmentsOf, firstItem, itemsOf, partIdOf, summaryOf } from './items';
 import * as request from './requests';
@@ -326,8 +326,65 @@ describe('meetings', () => {
 			},
 			{ address: 'guest@else.example', busy: null }
 		]);
-		expect(
-			request.getUserAvailability(['a@b.example'], '2026-10-20T00:00:00Z', '2026-10-21T00:00:00Z')
-		).toContain('<t:StartTime>2026-10-20T00:00:00</t:StartTime>');
+		const body = request.getUserAvailability(
+			['a@b.example'],
+			'2026-10-20T00:00:00Z',
+			'2026-10-21T00:00:00Z'
+		);
+		expect(body).toContain('<t:StartTime>2026-10-20T00:00:00</t:StartTime>');
+		// Exchange rejects a time zone whose two transitions are the same.
+		const rule = (name: string) => body.match(new RegExp(`<t:${name}>(.*?)</t:${name}>`))?.[1];
+		expect(rule('StandardTime')).toContain('<t:Bias>0</t:Bias>');
+		expect(rule('DaylightTime')).toContain('<t:Bias>0</t:Bias>');
+		expect(rule('StandardTime')).not.toBe(rule('DaylightTime'));
+	});
+
+	it('finds the meeting the user organizes by its UID', () => {
+		const messages = responseMessages(
+			soap(
+				'<m:GetItemResponse><m:ResponseMessages>' +
+					'<m:GetItemResponseMessage ResponseClass="Success"><m:Items><t:CalendarItem>' +
+					'<t:ItemId Id="OTHER" ChangeKey="K0"/><t:UID>abc</t:UID><t:IsOrganizer>false</t:IsOrganizer>' +
+					'<t:CalendarItemType>Single</t:CalendarItemType></t:CalendarItem></m:Items></m:GetItemResponseMessage>' +
+					'<m:GetItemResponseMessage ResponseClass="Success"><m:Items><t:CalendarItem>' +
+					'<t:ItemId Id="MINE" ChangeKey="K1"/><t:UID>ABC</t:UID><t:IsOrganizer>true</t:IsOrganizer>' +
+					'<t:CalendarItemType>Single</t:CalendarItemType></t:CalendarItem></m:Items></m:GetItemResponseMessage>' +
+					'</m:ResponseMessages></m:GetItemResponse>'
+			)
+		);
+		expect(organizedMeetingOf(messages, 'abc')).toEqual({ id: 'MINE', changeKey: 'K1' });
+		expect(organizedMeetingOf(messages, 'other')).toBeNull();
+	});
+
+	it('updates only the changed fields and notifies the attendees', () => {
+		const body = request.updateMeeting(
+			{ id: 'A1', changeKey: 'K1' },
+			{
+				start: '2026-11-09T09:00:00.000Z',
+				end: '2026-11-09T12:00:00.000Z',
+				location: null,
+				optional: [{ name: '', address: 'sam@example.com' }]
+			}
+		);
+		expect(body).toContain('SendMeetingInvitationsOrCancellations="SendToAllAndSaveCopy"');
+		expect(body).toContain('<t:ItemId Id="A1" ChangeKey="K1"/>');
+		expect(body).toContain('<t:Start>2026-11-09T09:00:00.000Z</t:Start>');
+		expect(body).toContain(
+			'<t:DeleteItemField><t:FieldURI FieldURI="calendar:Location"/></t:DeleteItemField>'
+		);
+		expect(body).toContain('<t:OptionalAttendees><t:Attendee>');
+		expect(body).not.toContain('item:Subject');
+		expect(body).not.toContain('RequiredAttendees');
+	});
+
+	it('cancels with the item reference before the note', () => {
+		const body = request.cancelMeeting({ id: 'A1', changeKey: 'K1' }, '<p>Sorry</p>');
+		expect(body).toContain('MessageDisposition="SendAndSaveCopy"');
+		expect(body.indexOf('<t:ReferenceItemId Id="A1" ChangeKey="K1"/>')).toBeLessThan(
+			body.indexOf('<t:NewBodyContent BodyType="HTML">&lt;p&gt;Sorry&lt;/p&gt;</t:NewBodyContent>')
+		);
+		expect(request.calendarView('2026-11-02T09:00:00.000Z', '2026-11-02T12:00:00.000Z')).toContain(
+			'<m:CalendarView MaxEntriesReturned="50" StartDate="2026-11-02T09:00:00.000Z"'
+		);
 	});
 });

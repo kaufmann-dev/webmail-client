@@ -165,6 +165,7 @@ async function draftFromForm(userId: string, form: FormData) {
 	const meeting: Meeting | undefined = meetingStart
 		? {
 				uid: '',
+				sequence: 0,
 				start: meetingStart,
 				end: text('meetingEnd'),
 				location: text('meetingLocation').trim() || null

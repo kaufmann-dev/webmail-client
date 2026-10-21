@@ -1,6 +1,8 @@
 import type { MailboxAvailability } from '../../../mail-types';
+import { MailError } from '../errors';
 import type { MailAccount } from '../types';
-import { ewsOperation } from './client';
+import { check, ewsCall, ewsOperation, failed } from './client';
+import { firstItem, itemId, itemsOf } from './items';
 import * as request from './requests';
 import { attr, child, list, text, type XmlNode } from './xml';
 
@@ -44,4 +46,47 @@ export async function availability(
 ): Promise<MailboxAvailability[]> {
 	const response = await ewsOperation(account, request.getUserAvailability(addresses, start, end));
 	return availabilityOf(response, addresses);
+}
+
+const MEETING_FIELDS = ['calendar:UID', 'calendar:IsOrganizer', 'calendar:CalendarItemType'];
+
+/**
+ * The single (not recurring) meeting the user organizes with this iCalendar UID, among the
+ * `GetItem` response messages of calendar items.
+ */
+export function organizedMeetingOf(
+	messages: XmlNode[],
+	uid: string
+): request.CalendarItemId | null {
+	const wanted = uid.toLowerCase();
+	for (const message of messages) {
+		const node = failed(message) ? null : firstItem(message)?.node;
+		if (
+			node &&
+			text(node.UID).toLowerCase() === wanted &&
+			text(node.IsOrganizer) === 'true' &&
+			text(node.CalendarItemType) === 'Single'
+		) {
+			return { id: itemId(node), changeKey: attr(child(node, 'ItemId'), 'ChangeKey') };
+		}
+	}
+	return null;
+}
+
+/** Finds the calendar item of a meeting the user sent, by its UID among items at its time. */
+export async function findOrganizedMeeting(
+	account: MailAccount,
+	uid: string,
+	start: string,
+	end: string
+): Promise<request.CalendarItemId> {
+	const [view] = await ewsCall(account, request.calendarView(start, end));
+	const ids = itemsOf(child(child(check(view), 'RootFolder'), 'Items')).map(({ node }) =>
+		itemId(node)
+	);
+	const found = ids.length
+		? organizedMeetingOf(await ewsCall(account, request.getItems(ids, MEETING_FIELDS)), uid)
+		: null;
+	if (!found) throw new MailError('This meeting is no longer in your calendar.', 404);
+	return found;
 }

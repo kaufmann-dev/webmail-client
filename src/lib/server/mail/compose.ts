@@ -15,7 +15,13 @@ import {
 	withoutDataImages
 } from './html-body';
 import { withClient, withMailbox } from './imap';
-import { invitationReply, meetingRequest, parseInvitation } from './invitations';
+import {
+	invitationReply,
+	meetingCancellation,
+	meetingRequest,
+	parseInvitation,
+	type MeetingRequest
+} from './invitations';
 import { encodeMessageRef } from './message-ref';
 import {
 	deleteMessages,
@@ -61,8 +67,8 @@ export interface Draft {
 	inReplyTo: string | null;
 	references: string[];
 	attachments: OutgoingAttachment[];
-	/** An iMIP calendar reply, sent as a `text/calendar` alternative. */
-	calendar?: { method: 'REPLY'; content: string };
+	/** An iMIP reply or cancellation, sent as a `text/calendar` alternative. */
+	calendar?: { method: 'REPLY' | 'CANCEL'; content: string };
 	/** Makes the message an invitation: `to` are required attendees, `cc` optional ones. */
 	meeting?: Meeting;
 }
@@ -71,6 +77,8 @@ export interface Draft {
 export interface Meeting {
 	/** Empty for a new meeting, which gets one when it is saved or sent. */
 	uid: string;
+	/** The iCalendar SEQUENCE: 0 until the sent meeting is updated. */
+	sequence: number;
 	/** ISO instants. */
 	start: string;
 	end: string;
@@ -217,14 +225,15 @@ export function meetingOf(account: MailAccount, read: ReadMessage): Meeting | nu
 		!invitation ||
 		invitation.method !== 'request' ||
 		invitation.allDay ||
+		invitation.recurring ||
 		!invitation.end ||
 		!invitation.uid ||
 		!invitation.organizedByYou
 	) {
 		return null;
 	}
-	const { uid, start, end, location } = invitation;
-	return { uid, start, end, location };
+	const { uid, sequence, start, end, location } = invitation;
+	return { uid, sequence, start, end, location };
 }
 
 /** Rejects meetings Exchange and calendar programs would not accept; drafts only need a time. */
@@ -244,6 +253,18 @@ function newMessageId(account: MailAccount): string {
 	return `<${randomUUID()}@${mailDomain(account)}>`;
 }
 
+/** The iCalendar fields of a meeting message: `to` are required attendees, `cc` optional ones. */
+function meetingRequestOf(account: MailAccount, draft: Draft, meeting: Meeting): MeetingRequest {
+	return {
+		...meeting,
+		organizer: { name: account.displayName, address: account.email },
+		required: draft.to,
+		optional: draft.cc,
+		title: draft.subject,
+		description: plainTextOf(draft.html)
+	};
+}
+
 async function buildRaw(
 	account: MailAccount,
 	draft: Draft,
@@ -252,17 +273,7 @@ async function buildRaw(
 	const { html, images } = embedDataImages(draft.html, mailDomain(account));
 	const { meeting } = draft;
 	const icalEvent = meeting
-		? {
-				method: 'REQUEST',
-				content: meetingRequest({
-					...meeting,
-					organizer: { name: account.displayName, address: account.email },
-					required: draft.to,
-					optional: draft.cc,
-					title: draft.subject,
-					description: plainTextOf(draft.html)
-				})
-			}
+		? { method: 'REQUEST', content: meetingRequest(meetingRequestOf(account, draft, meeting)) }
 		: draft.calendar;
 	const composer = new MailComposer({
 		from: { name: account.displayName, address: account.email },
@@ -416,6 +427,176 @@ export async function respondToInvitation(
 		},
 		{ answersRef: ref }
 	);
+}
+
+type MeetingDraft = Draft & { meeting: Meeting };
+
+/** A meeting the user organizes and has sent, from its invitation (or an update of it). */
+async function sentMeeting(
+	userId: string,
+	ref: string
+): Promise<{ account: MailAccount; current: MeetingDraft }> {
+	const { account, locator } = await resolveRef(userId, ref);
+	const read = await getMessage(account, locator);
+	const meeting = meetingOf(account, read);
+	if (!meeting) {
+		throw new MailError(
+			'This message is not a meeting you organized. Use the invitation you sent (in Sent Items).',
+			400
+		);
+	}
+	if (locator.path === (await resolveFolder(account, 'drafts'))) {
+		throw new MailError('This meeting has not been sent yet; send its draft instead.', 400);
+	}
+	const { detail } = read;
+	return {
+		account,
+		current: {
+			accountId: account.id,
+			to: detail.to,
+			cc: detail.cc,
+			bcc: [],
+			subject: detail.subject,
+			html: detail.html,
+			inReplyTo: null,
+			references: [],
+			attachments: [],
+			meeting
+		}
+	};
+}
+
+const CANCELED_TEXT = 'This meeting has been canceled.';
+
+/** The cancellation of a meeting for its `to` and `cc`, by email (iMIP CANCEL). */
+function cancellation(account: MailAccount, meeting: MeetingDraft, html: string): Draft {
+	return {
+		accountId: account.id,
+		to: meeting.to,
+		cc: meeting.cc,
+		bcc: [],
+		subject: `Canceled: ${meeting.subject}`,
+		html,
+		inReplyTo: null,
+		references: [],
+		attachments: [],
+		calendar: {
+			method: 'CANCEL',
+			content: meetingCancellation(meetingRequestOf(account, { ...meeting, html }, meeting.meeting))
+		}
+	};
+}
+
+/** Changes to a sent meeting; absent fields stay as they are. */
+export interface MeetingUpdate {
+	subject?: string;
+	/** Sanitized editor HTML. */
+	html?: string;
+	/** ISO instants. A new start without an end keeps the duration. */
+	start?: string;
+	end?: string;
+	/** Null removes the location. */
+	location?: string | null;
+	required?: Address[];
+	optional?: Address[];
+}
+
+/**
+ * Changes a meeting the user sent and sends the update to its attendees at once. Exchange updates
+ * the calendar item (and tells removed attendees itself); other accounts send the invitation again
+ * with a higher sequence, and a cancellation to removed attendees.
+ */
+export async function updateMeeting(
+	userId: string,
+	ref: string,
+	changes: MeetingUpdate
+): Promise<SendResult & Pick<Meeting, 'start' | 'end'>> {
+	const { account, current } = await sentMeeting(userId, ref);
+	const was = current.meeting;
+	const start = changes.start ?? was.start;
+	const end =
+		changes.end ??
+		(changes.start
+			? new Date(Date.parse(start) + Date.parse(was.end) - Date.parse(was.start)).toISOString()
+			: was.end);
+	const updated: MeetingDraft = {
+		...current,
+		to: changes.required ?? current.to,
+		cc: changes.optional ?? current.cc,
+		subject: changes.subject ?? current.subject,
+		html: changes.html ?? current.html,
+		meeting: {
+			...was,
+			sequence: was.sequence + 1,
+			start,
+			end,
+			location: changes.location === undefined ? was.location : changes.location
+		}
+	};
+	if (!updated.to.length) throw new MailError('A meeting needs a required attendee.', 400);
+	checkMeeting(updated, true);
+	const timeChanged = start !== was.start || end !== was.end;
+
+	if (account.provider === 'exchange') {
+		await ews.updateMeeting(account, was, {
+			subject: changes.subject,
+			html:
+				changes.html === undefined
+					? undefined
+					: outgoingHtml(withoutDataImages(changes.html), toSummary(account).font),
+			start: timeChanged ? start : undefined,
+			end: timeChanged ? end : undefined,
+			location: changes.location,
+			required: changes.required,
+			optional: changes.optional
+		});
+		return {
+			messageId: null,
+			to: updated.to,
+			cc: updated.cc,
+			bcc: [],
+			subject: updated.subject,
+			start,
+			end
+		};
+	}
+
+	const result = await sendDraft(userId, updated);
+	const kept = new Set([...updated.to, ...updated.cc].map((a) => a.address.toLowerCase()));
+	const removed = [...current.to, ...current.cc].filter((a) => !kept.has(a.address.toLowerCase()));
+	if (removed.length) {
+		await sendDraft(
+			userId,
+			cancellation(account, { ...updated, to: removed, cc: [] }, textToComposeHtml(CANCELED_TEXT))
+		);
+	}
+	return { ...result, start, end };
+}
+
+/** Cancels a meeting the user sent and tells its attendees at once. */
+export async function cancelMeeting(
+	userId: string,
+	ref: string,
+	html: string | null
+): Promise<SendResult> {
+	const { account, current } = await sentMeeting(userId, ref);
+	const body = html ?? textToComposeHtml(CANCELED_TEXT);
+	if (account.provider === 'exchange') {
+		await ews.cancelMeeting(
+			account,
+			current.meeting,
+			outgoingHtml(withoutDataImages(body), toSummary(account).font)
+		);
+		return {
+			messageId: null,
+			to: current.to,
+			cc: current.cc,
+			bcc: [],
+			subject: `Canceled: ${current.subject}`
+		};
+	}
+	const meeting = { ...current.meeting, sequence: current.meeting.sequence + 1 };
+	return sendDraft(userId, cancellation(account, { ...current, meeting }, body));
 }
 
 /** Saves to the Drafts folder, replacing an earlier version; returns the new draft's ref. */

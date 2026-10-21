@@ -1,7 +1,13 @@
 import ICAL from 'ical.js';
 import { describe, expect, it } from 'vitest';
 import { MailError } from './errors';
-import { findCalendarPart, invitationReply, meetingRequest, parseInvitation } from './invitations';
+import {
+	findCalendarPart,
+	invitationReply,
+	meetingCancellation,
+	meetingRequest,
+	parseInvitation
+} from './invitations';
 
 const ics = (...lines: string[]) => lines.join('\r\n');
 
@@ -85,6 +91,7 @@ describe('parseInvitation', () => {
 			allDay: false,
 			location: 'Room 4',
 			uid: 'abc123@google.com',
+			sequence: 2,
 			organizer: { name: 'Alex Organizer', address: 'alex@example.com' },
 			recurring: true,
 			attendees: [
@@ -199,19 +206,20 @@ describe('invitationReply', () => {
 	});
 });
 
-describe('meetingRequest', () => {
-	const meeting = {
-		uid: 'meeting-1@example.org',
-		organizer: { name: 'Me', address: 'me@example.org' },
-		required: [{ name: 'Alex', address: 'alex@example.com' }],
-		optional: [{ name: '', address: 'sam@example.com' }],
-		title: 'Planning, part 2',
-		description: 'Agenda; see notes',
-		location: 'Room 4',
-		start: '2026-10-20T08:00:00.000Z',
-		end: '2026-10-20T08:30:00.000Z'
-	};
+const meeting = {
+	uid: 'meeting-1@example.org',
+	sequence: 0,
+	organizer: { name: 'Me', address: 'me@example.org' },
+	required: [{ name: 'Alex', address: 'alex@example.com' }],
+	optional: [{ name: '', address: 'sam@example.com' }],
+	title: 'Planning, part 2',
+	description: 'Agenda; see notes',
+	location: 'Room 4',
+	start: '2026-10-20T08:00:00.000Z',
+	end: '2026-10-20T08:30:00.000Z'
+};
 
+describe('meetingRequest', () => {
 	it('reads back as an invitation from the organizer', () => {
 		const ics = meetingRequest(meeting, new Date('2026-10-19T10:00:00Z'));
 		expect(parseInvitation(ics, 'alex@example.com')).toEqual({
@@ -222,6 +230,7 @@ describe('meetingRequest', () => {
 			allDay: false,
 			location: 'Room 4',
 			uid: 'meeting-1@example.org',
+			sequence: 0,
 			organizer: { name: 'Me', address: 'me@example.org' },
 			recurring: false,
 			attendees: [
@@ -246,6 +255,30 @@ describe('meetingRequest', () => {
 			['OPT-PARTICIPANT', 'TRUE']
 		]);
 		expect(event.getFirstPropertyValue('description')).toBe('Agenda; see notes');
+	});
+
+	it('updates a sent meeting with a higher sequence', () => {
+		const ics = meetingRequest({ ...meeting, sequence: 3 });
+		expect(parseInvitation(ics, 'alex@example.com')).toMatchObject({
+			method: 'request',
+			uid: 'meeting-1@example.org',
+			sequence: 3
+		});
+	});
+});
+
+describe('meetingCancellation', () => {
+	it('cancels the meeting for its attendees without asking for answers', () => {
+		const ics = meetingCancellation({ ...meeting, sequence: 1, optional: [] });
+		expect(parseInvitation(ics, 'alex@example.com')).toMatchObject({
+			method: 'cancel',
+			uid: 'meeting-1@example.org',
+			sequence: 1,
+			attendees: [{ address: 'alex@example.com', status: 'needs-action' }]
+		});
+		const event = new ICAL.Component(ICAL.parse(ics)).getFirstSubcomponent('vevent')!;
+		expect(event.getFirstPropertyValue('status')).toBe('CANCELLED');
+		expect(event.getFirstProperty('attendee')?.getParameter('rsvp')).toBeUndefined();
 	});
 });
 

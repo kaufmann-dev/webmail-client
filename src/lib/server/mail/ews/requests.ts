@@ -408,12 +408,111 @@ export function createMeeting(meeting: MeetingItem): string {
 	);
 }
 
-/** The legacy time zone element for UTC: no bias and no daylight saving time. */
+/** The calendar items overlapping a time span, at most 50 (a view returns no more). */
+export function calendarView(start: string, end: string): string {
+	return (
+		'<m:FindItem Traversal="Shallow"><m:ItemShape><t:BaseShape>IdOnly</t:BaseShape></m:ItemShape>' +
+		`<m:CalendarView MaxEntriesReturned="50" StartDate="${escapeXml(start)}" EndDate="${escapeXml(end)}"/>` +
+		'<m:ParentFolderIds><t:DistinguishedFolderId Id="calendar"/></m:ParentFolderIds></m:FindItem>'
+	);
+}
+
+/** A calendar item to change, with the change key Exchange's smart responses require. */
+export interface CalendarItemId {
+	id: string;
+	changeKey: string;
+}
+
+function calendarItemId(element: string, item: CalendarItemId): string {
+	return `<t:${element} Id="${escapeXml(item.id)}" ChangeKey="${escapeXml(item.changeKey)}"/>`;
+}
+
+/** Changes to a meeting; absent fields stay as they are. */
+export interface MeetingChanges {
+	subject?: string;
+	/** The HTML document of the description. */
+	html?: string;
+	/** ISO instants. */
+	start?: string;
+	end?: string;
+	/** Null removes the location. */
+	location?: string | null;
+	required?: Address[];
+	optional?: Address[];
+}
+
+function setCalendarField(uri: string, value: string): string {
+	return (
+		`<t:SetItemField><t:FieldURI FieldURI="${uri}"/>` +
+		`<t:CalendarItem>${value}</t:CalendarItem></t:SetItemField>`
+	);
+}
+
+function deleteCalendarField(uri: string): string {
+	return `<t:DeleteItemField><t:FieldURI FieldURI="${uri}"/></t:DeleteItemField>`;
+}
+
+/**
+ * Updates a meeting the user organizes and sends the update to its attendees; Exchange sends
+ * cancellations to removed attendees itself.
+ */
+export function updateMeeting(item: CalendarItemId, changes: MeetingChanges): string {
+	const updates = [
+		changes.subject !== undefined &&
+			setCalendarField('item:Subject', `<t:Subject>${escapeXml(changes.subject)}</t:Subject>`),
+		changes.html !== undefined &&
+			setCalendarField('item:Body', `<t:Body BodyType="HTML">${escapeXml(changes.html)}</t:Body>`),
+		changes.start !== undefined &&
+			setCalendarField('calendar:Start', `<t:Start>${escapeXml(changes.start)}</t:Start>`),
+		changes.end !== undefined &&
+			setCalendarField('calendar:End', `<t:End>${escapeXml(changes.end)}</t:End>`),
+		changes.location !== undefined &&
+			(changes.location
+				? setCalendarField(
+						'calendar:Location',
+						`<t:Location>${escapeXml(changes.location)}</t:Location>`
+					)
+				: deleteCalendarField('calendar:Location')),
+		changes.required !== undefined &&
+			setCalendarField(
+				'calendar:RequiredAttendees',
+				attendees('RequiredAttendees', changes.required)
+			),
+		changes.optional !== undefined &&
+			(changes.optional.length
+				? setCalendarField(
+						'calendar:OptionalAttendees',
+						attendees('OptionalAttendees', changes.optional)
+					)
+				: deleteCalendarField('calendar:OptionalAttendees'))
+	].filter((update): update is string => typeof update === 'string');
+	return (
+		'<m:UpdateItem MessageDisposition="SaveOnly" ConflictResolution="AutoResolve"' +
+		' SendMeetingInvitationsOrCancellations="SendToAllAndSaveCopy"><m:ItemChanges>' +
+		`<t:ItemChange>${calendarItemId('ItemId', item)}<t:Updates>${updates.join('')}</t:Updates></t:ItemChange>` +
+		'</m:ItemChanges></m:UpdateItem>'
+	);
+}
+
+/** Cancels a meeting the user organizes, telling its attendees, with a copy in Sent Items. */
+export function cancelMeeting(item: CalendarItemId, html: string): string {
+	return (
+		'<m:CreateItem MessageDisposition="SendAndSaveCopy"><m:Items><t:CancelCalendarItem>' +
+		calendarItemId('ReferenceItemId', item) +
+		`<t:NewBodyContent BodyType="HTML">${escapeXml(html)}</t:NewBodyContent>` +
+		'</t:CancelCalendarItem></m:Items></m:CreateItem>'
+	);
+}
+
+/**
+ * The legacy time zone element for UTC. Exchange rejects identical standard and daylight
+ * transitions, so UTC has two (as in the EWS Managed API) that change no offset.
+ */
 const UTC_ZONE = (() => {
-	const rule = (name: string) =>
-		`<t:${name}><t:Bias>0</t:Bias><t:Time>00:00:00</t:Time><t:DayOrder>1</t:DayOrder>` +
-		`<t:Month>1</t:Month><t:DayOfWeek>Sunday</t:DayOfWeek></t:${name}>`;
-	return `<t:TimeZone><t:Bias>0</t:Bias>${rule('StandardTime')}${rule('DaylightTime')}</t:TimeZone>`;
+	const rule = (name: string, month: number) =>
+		`<t:${name}><t:Bias>0</t:Bias><t:Time>02:00:00</t:Time><t:DayOrder>1</t:DayOrder>` +
+		`<t:Month>${month}</t:Month><t:DayOfWeek>Sunday</t:DayOfWeek></t:${name}>`;
+	return `<t:TimeZone><t:Bias>0</t:Bias>${rule('StandardTime', 3)}${rule('DaylightTime', 10)}</t:TimeZone>`;
 })();
 
 /** `2026-10-20T08:00:00` in UTC, as availability requests and responses use it. */

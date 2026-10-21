@@ -47,9 +47,11 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
   - `ews/`: Exchange accounts over Exchange Web Services (SOAP, Basic authentication, the account's
     `server` and optional `username`), with no IMAP: `client.ts` (requests and errors),
     `requests.ts` (request bodies), `items.ts` (response mapping), `folders.ts`, `messages.ts`,
-    `compose.ts` (drafts and sending as MIME, meetings as calendar items, native meeting
-    responses), and `calendar.ts` (free/busy through `GetUserAvailability`, which `ewsOperation`
-    calls because it has no response messages). Lists page by position. Reading fetches the
+    `compose.ts` (drafts and sending as MIME, meetings as calendar items, their updates and
+    cancellations, native meeting responses), and `calendar.ts` (free/busy through
+    `GetUserAvailability`, which `ewsOperation` calls because it has no response messages and
+    which needs a UTC zone with two distinct transitions; sent meetings found by UID in a calendar
+    view of their time). Lists page by position. Reading fetches the
     calendar part of meeting messages and of messages carrying a calendar part (meeting drafts).
   - `messages.ts`: listing, search, reading, moving, and threads. Reading fetches only body text,
     calendar parts, and embedded images (`structure.ts`); attachments download on demand. Read
@@ -61,7 +63,10 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
     `Draft.meeting` makes a message a meeting invitation (`to` required, `cc` optional attendees,
     no Bcc or attachments): drafts are ordinary Drafts messages with an iMIP request part, which
     `meetingOf` reads back; sending creates an Exchange calendar item, or mails the request over
-    SMTP (it does not enter the user's calendar there).
+    SMTP (it does not enter the user's calendar there). `updateMeeting` and `cancelMeeting` change
+    a sent, non-recurring meeting from its invitation: Exchange updates or cancels the calendar
+    item, SMTP sends the request again with a higher `SEQUENCE` (and a CANCEL to removed
+    attendees) or an iMIP CANCEL.
   - `body-text.ts`: bodies as plain text for AI clients (`ReadMessage.detail.text`) from the HTML
     when there is one: decoded entities, Markdown data tables, `[image: name]`, and the new text
     without quoted messages (`ReadMessage.newText`, by quote containers first, then text patterns;
@@ -123,7 +128,7 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
     `access.visible`.
   - Without attachments, `get_message` leaves out the attachment list (file names included).
   - `create_meeting` needs `organize` for drafts and `send` to send, like `compose_new_message`;
-    `find_meeting_times` needs `read`.
+    `find_meeting_times` needs `read`. `update_meeting` and `cancel_meeting` need `send`.
   - Folder tools need `organize`. `delete_folder` deletes only empty folders, since a full delete
     would also destroy messages outside the time window. `rename_folder` rewrites the short refs
     of messages in the renamed subtree (`McpRefs.folderRenamed`).
@@ -136,8 +141,8 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
   `/mcp/files/[token]` and `/mcp/uploads/[token]`) live in memory only, are authenticated by their
   token alone, and are bound to the user and OAuth client; downloads check access again when
   fetched.
-- Sending tools default to `mode: 'draft'`, except `respond_to_invitation`, which always sends (a
-  saved draft would lose its calendar part).
+- Sending tools default to `mode: 'draft'`, except `respond_to_invitation` (a saved draft would
+  lose its calendar part), `update_meeting`, and `cancel_meeting`, which always send.
 
 ## UI
 

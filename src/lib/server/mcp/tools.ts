@@ -10,12 +10,14 @@ import {
 	type MessageSummary
 } from '../../mail-types';
 import {
+	cancelMeeting,
 	loadDraft,
 	prepareForward,
 	prepareReply,
 	respondToInvitation,
 	saveDraft,
 	sendDraft,
+	updateMeeting,
 	type Draft,
 	type OutgoingAttachment
 } from '../mail/compose';
@@ -97,7 +99,8 @@ To plan a meeting, find_meeting_times (Exchange accounts only) returns the busy 
 and the attendees and the times that suit everyone. create_meeting invites attendees; like the
 other sending tools it saves a draft unless the user asked to send. Exchange puts sent meetings in
 the user's calendar; other accounts send the invitation by email only, so the user adds the
-meeting to their own calendar.`;
+meeting to their own calendar. update_meeting and cancel_meeting change or cancel a meeting the
+user sent, given the invitation in Sent Items; they notify the attendees immediately.`;
 
 function json(value: unknown): CallToolResult {
 	return { content: [{ type: 'text', text: JSON.stringify(value) }] };
@@ -1159,6 +1162,7 @@ export function createMcpServer(
 					attachments: [],
 					meeting: {
 						uid: '',
+						sequence: 0,
 						start: instantIn(start, time_zone),
 						end: instantIn(end, time_zone),
 						location: location?.trim() || null
@@ -1168,6 +1172,105 @@ export function createMcpServer(
 					throw new MailError('The meeting must end after it starts.', 400);
 				}
 				return { ...(await deliver(draft, how)), start, end, time_zone };
+			})
+	);
+
+	const sentInvitationRef = messageRef.describe(
+		'The invitation the user sent for the meeting (in Sent Items), or its latest update.'
+	);
+
+	server.registerTool(
+		'update_meeting',
+		{
+			title: 'Update meeting',
+			description:
+				'Changes a meeting the user organized and sent (not recurring) and sends the update to all ' +
+				'attendees immediately; there is no draft mode. Only use it when the user asked to change the ' +
+				'meeting. Fields left out stay as they are; a new start without an end keeps the duration. ' +
+				"Exchange accounts update the user's calendar; other accounts email the update.",
+			inputSchema: z.object({
+				message_ref: sentInvitationRef,
+				subject: z.string().min(1).max(998).optional(),
+				body: z
+					.string()
+					.optional()
+					.describe('New plain text description; the account signature is added.'),
+				start: wallClock.optional(),
+				end: wallClock.optional(),
+				time_zone: timeZone
+					.optional()
+					.describe('IANA time zone of start and end; required with them.'),
+				location: z.string().max(500).optional().describe('An empty string removes the location.'),
+				required: recipientList.min(1).optional().describe('All required attendees.'),
+				optional: recipientList.optional().describe('All optional attendees.')
+			})
+		},
+		({ message_ref, subject, body, start, end, time_zone, location, required, optional }) =>
+			guard(async () => {
+				const changes = [subject, body, start, end, location, required, optional];
+				if (changes.every((change) => change === undefined)) {
+					throw new MailError('Give at least one change.', 400);
+				}
+				if ((start || end) && !time_zone) {
+					throw new MailError('Give time_zone with start and end.', 400);
+				}
+				const result = await withMessage(message_ref, async (ref) => {
+					const { account } = await access.requireMessage(ref, 'send');
+					return updateMeeting(userId, ref, {
+						subject,
+						html:
+							body === undefined
+								? undefined
+								: composeBody(textToComposeHtml(body), account.signature),
+						start: start && instantIn(start, time_zone!),
+						end: end && instantIn(end, time_zone!),
+						location: location === undefined ? undefined : location.trim() || null,
+						required: required && parseAddressList(required),
+						optional: optional && parseAddressList(optional)
+					});
+				});
+				const zone = time_zone ?? 'UTC';
+				return {
+					status: 'sent',
+					subject: result.subject,
+					start: formatWallClock(Date.parse(result.start), zone),
+					end: formatWallClock(Date.parse(result.end), zone),
+					time_zone: zone,
+					to: result.to.map(formatAddress),
+					...(result.cc.length && { cc: result.cc.map(formatAddress) })
+				};
+			})
+	);
+
+	server.registerTool(
+		'cancel_meeting',
+		{
+			title: 'Cancel meeting',
+			description:
+				'Cancels a meeting the user organized and sent (not recurring) and tells all attendees ' +
+				'immediately; there is no draft mode. Only use it when the user asked to cancel the meeting.',
+			inputSchema: z.object({
+				message_ref: sentInvitationRef,
+				comment: z
+					.string()
+					.optional()
+					.describe('Plain text note to the attendees; the account signature is added.')
+			})
+		},
+		({ message_ref, comment }) =>
+			guard(async () => {
+				const result = await withMessage(message_ref, async (ref) => {
+					const { account } = await access.requireMessage(ref, 'send');
+					const html = comment?.trim()
+						? composeBody(textToComposeHtml(comment), account.signature)
+						: null;
+					return cancelMeeting(userId, ref, html);
+				});
+				return {
+					status: 'sent',
+					subject: result.subject,
+					to: [...result.to, ...result.cc].map(formatAddress)
+				};
 			})
 	);
 

@@ -113,6 +113,11 @@ function when(event: Component): Pick<Invitation, 'start' | 'end' | 'allDay'> {
 	return { allDay: false, start, end: end === start ? null : end };
 }
 
+function sequenceOf(event: Component): number {
+	const value = Number(event.getFirstPropertyValue('sequence') ?? 0);
+	return Number.isInteger(value) && value > 0 ? value : 0;
+}
+
 /** The invitation in iCalendar text, as seen by the receiving address; null if it is unreadable. */
 export function parseInvitation(ics: string, ownAddress: string): Invitation | null {
 	const loaded = load(ics);
@@ -131,6 +136,7 @@ export function parseInvitation(ics: string, ownAddress: string): Invitation | n
 			...when(event),
 			location: text(event.getFirstPropertyValue('location')),
 			uid: text(event.getFirstPropertyValue('uid')),
+			sequence: sequenceOf(event),
 			organizer,
 			recurring: event.hasProperty('rrule') || event.hasProperty('rdate'),
 			attendees,
@@ -202,6 +208,8 @@ export function invitationReply(
 /** A meeting the user organizes; attendees and title come from the message carrying it. */
 export interface MeetingRequest {
 	uid: string;
+	/** 0 for a new meeting; every update and the cancellation raise it. */
+	sequence: number;
 	organizer: Address;
 	required: Address[];
 	optional: Address[];
@@ -220,15 +228,20 @@ function calAddressProperty(name: 'organizer' | 'attendee', address: Address): P
 	return property;
 }
 
-/** An iMIP request (RFC 5546 §3.2.2) inviting the attendees to a new meeting, in UTC. */
-export function meetingRequest(meeting: MeetingRequest, now = new Date()): string {
+/** The iMIP calendar of a meeting with its attendees, in UTC; `answer` asks them to reply. */
+function meetingCalendar(
+	method: 'REQUEST' | 'CANCEL',
+	meeting: MeetingRequest,
+	now: Date,
+	answer: boolean
+): { calendar: Component; event: Component } {
 	const calendar = new ICAL.Component('vcalendar');
 	calendar.addPropertyWithValue('prodid', PRODID);
 	calendar.addPropertyWithValue('version', '2.0');
-	calendar.addPropertyWithValue('method', 'REQUEST');
+	calendar.addPropertyWithValue('method', method);
 	const event = new ICAL.Component('vevent');
 	event.addPropertyWithValue('uid', meeting.uid);
-	event.addPropertyWithValue('sequence', 0);
+	event.addPropertyWithValue('sequence', meeting.sequence);
 	event.addPropertyWithValue('dtstamp', ICAL.Time.fromJSDate(now, true));
 	event.addPropertyWithValue('dtstart', ICAL.Time.fromJSDate(new Date(meeting.start), true));
 	event.addPropertyWithValue('dtend', ICAL.Time.fromJSDate(new Date(meeting.end), true));
@@ -243,10 +256,27 @@ export function meetingRequest(meeting: MeetingRequest, now = new Date()): strin
 	for (const [address, role] of roles) {
 		const attendee = calAddressProperty('attendee', address);
 		attendee.setParameter('role', role);
-		attendee.setParameter('partstat', 'NEEDS-ACTION');
-		attendee.setParameter('rsvp', 'TRUE');
+		if (answer) {
+			attendee.setParameter('partstat', 'NEEDS-ACTION');
+			attendee.setParameter('rsvp', 'TRUE');
+		}
 		event.addProperty(attendee);
 	}
 	calendar.addSubcomponent(event);
+	return { calendar, event };
+}
+
+/**
+ * An iMIP request (RFC 5546 §3.2.2) inviting the attendees to a meeting, in UTC. With the UID of a
+ * sent meeting and a higher sequence, it updates that meeting.
+ */
+export function meetingRequest(meeting: MeetingRequest, now = new Date()): string {
+	return meetingCalendar('REQUEST', meeting, now, true).calendar.toString();
+}
+
+/** An iMIP cancellation (RFC 5546 §3.2.5) of a meeting for the listed attendees. */
+export function meetingCancellation(meeting: MeetingRequest, now = new Date()): string {
+	const { calendar, event } = meetingCalendar('CANCEL', meeting, now, false);
+	event.addPropertyWithValue('status', 'CANCELLED');
 	return calendar.toString();
 }

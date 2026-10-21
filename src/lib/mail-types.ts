@@ -151,6 +151,8 @@ export interface Invitation {
 	allDay: boolean;
 	location: string | null;
 	uid: string | null;
+	/** The iCalendar SEQUENCE, raised by every update the organizer sends. */
+	sequence: number;
 	organizer: Address | null;
 	recurring: boolean;
 	attendees: Attendee[];
