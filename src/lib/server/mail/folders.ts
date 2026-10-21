@@ -39,7 +39,15 @@ const SPECIAL_USE_ROLES: Record<string, FolderRole> = {
 };
 
 /** Gmail's label views that duplicate other folders and are not useful as plain folders. */
-const HIDDEN_SPECIAL_USE = new Set(['\\Flagged', '\\Important']);
+const HIDDEN_ATTRIBUTES = ['\\All', '\\Flagged', '\\Important'];
+
+/**
+ * Whether a folder without a role is one of Gmail's label views. imapflow reports only RFC 6154
+ * flags as `specialUse`, so `\Important` is found among the folder's own attributes.
+ */
+export function isHiddenFolder(entry: Pick<ListResponse, 'flags' | 'specialUse'>): boolean {
+	return HIDDEN_ATTRIBUTES.some((flag) => entry.specialUse === flag || entry.flags.has(flag));
+}
 
 export function folderRole(provider: ImapProvider, entry: ListResponse) {
 	if (entry.path.toUpperCase() === 'INBOX') return 'inbox';
@@ -78,13 +86,7 @@ async function listFolders(account: MailAccount): Promise<Folder[]> {
 		if (entry.flags.has('\\Noselect') || entry.flags.has('\\NonExistent')) continue;
 		let role: FolderRole | null = folderRole(provider, entry);
 		if (role && taken.has(role)) role = null;
-		if (
-			!role &&
-			entry.specialUse &&
-			(HIDDEN_SPECIAL_USE.has(entry.specialUse) || entry.specialUse === '\\All')
-		) {
-			continue;
-		}
+		if (!role && isHiddenFolder(entry)) continue;
 		if (role) taken.add(role);
 		folders.push({ path: entry.path, name: entry.name, depth: entry.parent.length, role });
 	}
