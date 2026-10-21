@@ -13,7 +13,7 @@
 	import TooltipButton from '#lib/components/tooltip-button.svelte';
 	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
 	import { Spinner } from '#lib/components/ui/spinner/index.js';
-	import { visibleTree, type TreeRow } from '#lib/folder-tree.js';
+	import { nestFolders, visibleTree, type TreeRow } from '#lib/folder-tree.js';
 	import { scopeAccountIds, singleAccount, switchedFolder, viewedRole } from '#lib/mail-scope.js';
 	import { FOLDER_ROLES, FOLDER_ROLE_LABELS, type AccountSummary } from '#lib/mail-types.js';
 	import { folderDestination, type FolderEntry, type MoveDestination } from '#lib/move-targets.js';
@@ -124,28 +124,33 @@
 				destination: { accountId: null, key, role: key }
 			}));
 		}
-		return (folders[account.id] ?? []).map((entry) => ({
+		return nestFolders(folders[account.id] ?? []).map(({ folder: entry, depth }) => ({
 			key: entry.role ?? entry.path,
 			label: entry.role ? FOLDER_ROLE_LABELS[entry.role] : entry.name,
-			depth: entry.role ? 0 : entry.depth,
+			depth,
 			unread: entry.role === 'inbox' ? unread[account.id] : null,
 			destination: folderDestination(account.id, entry),
 			entry
 		}));
 	});
-	const roleLinks = $derived(links.filter((link) => link.destination.role));
-	const customRows = $derived.by(() => {
+	/** The visible rows of the role folders and of the custom folders, each with its subfolders. */
+	const sections = $derived.by(() => {
+		const roles: FolderLink[] = [];
+		const custom: FolderLink[] = [];
+		let section = roles;
+		for (const link of links) {
+			if (link.depth === 0) section = link.destination.role ? roles : custom;
+			section.push(link);
+		}
 		const prefix = `${account?.id}:`;
 		const accountCollapsed = new Set(
 			[...collapsed].filter((key) => key.startsWith(prefix)).map((key) => key.slice(prefix.length))
 		);
-		return visibleTree(
-			links.filter((link) => !link.destination.role),
-			accountCollapsed,
-			folder
-		);
+		return {
+			roles: visibleTree(roles, accountCollapsed, folder),
+			custom: visibleTree(custom, accountCollapsed, folder)
+		};
 	});
-	const nested = $derived(customRows.some((row) => row.hasChildren));
 
 	function href(scopeValue: string, folderValue: string) {
 		return resolve('/(app)/mail/[scope]/[...folder]', { scope: scopeValue, folder: folderValue });
@@ -161,7 +166,7 @@
 	}
 </script>
 
-{#snippet folderRow(row: TreeRow<FolderLink>)}
+{#snippet folderRow(row: TreeRow<FolderLink>, nested: boolean)}
 	{@const link = row.item}
 	<div class="group flex min-w-0 items-center" style:padding-left="{link.depth * 0.75}rem">
 		{#if row.hasChildren}
@@ -181,7 +186,7 @@
 			<span class="w-6 shrink-0" aria-hidden="true"></span>
 		{/if}
 		{@render folderLink(link, 0)}
-		{#if account && link.entry && onfolder}
+		{#if account && link.entry && !link.entry.role && onfolder}
 			{@render folderMenu(account.id, link.entry)}
 		{/if}
 	</div>
@@ -250,12 +255,14 @@
 		/>
 
 		{#if links.length}
+			{@const rolesNested = sections.roles.some((row) => row.hasChildren)}
+			{@const customNested = sections.custom.some((row) => row.hasChildren)}
 			<div class="flex flex-col">
-				{#each roleLinks as link (link.key)}
-					{@render folderLink(link)}
+				{#each sections.roles as row (row.item.key)}
+					{@render folderRow(row, rolesNested)}
 				{/each}
 			</div>
-			{#if customRows.length || (account && onfolder)}
+			{#if sections.custom.length || (account && onfolder)}
 				<div class="flex flex-col">
 					<div class="flex items-center justify-between pb-1 pl-2">
 						<h2 class="text-xs font-medium text-muted-foreground">Folders</h2>
@@ -272,8 +279,8 @@
 							</TooltipButton>
 						{/if}
 					</div>
-					{#each customRows as row (row.item.key)}
-						{@render folderRow(row)}
+					{#each sections.custom as row (row.item.key)}
+						{@render folderRow(row, customNested)}
 					{/each}
 				</div>
 			{/if}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isWithin, renamedPath, visibleTree } from './folder-tree';
+import { isWithin, nestFolders, renamedPath, visibleTree } from './folder-tree';
 
 const folders = [
 	{ key: 'Projects', depth: 0 },
@@ -35,6 +35,61 @@ describe('visibleTree', () => {
 		const rows = visibleTree(folders, new Set(['Projects']), 'Projects/Alpha/Notes');
 		expect(keys(rows)).toContain('Projects/Alpha/Notes');
 		expect(rows[0].expanded).toBe(true);
+	});
+});
+
+describe('nestFolders', () => {
+	const nested = (entries: { path: string; name: string; depth: number }[]) =>
+		nestFolders(entries).map(({ folder, depth }) => [folder.path, depth]);
+
+	it('places subfolders of role folders below them, after the other role folders', () => {
+		expect(
+			nested([
+				{ path: 'Inbox', name: 'Inbox', depth: 0 },
+				{ path: 'Trash', name: 'Trash', depth: 0 },
+				{ path: 'Trash/Old', name: 'Old', depth: 1 },
+				{ path: 'Inbox/Projects', name: 'Projects', depth: 1 },
+				{ path: 'Inbox/Projects/Alpha', name: 'Alpha', depth: 2 },
+				{ path: 'Receipts', name: 'Receipts', depth: 0 }
+			])
+		).toEqual([
+			['Inbox', 0],
+			['Inbox/Projects', 1],
+			['Inbox/Projects/Alpha', 2],
+			['Trash', 0],
+			['Trash/Old', 1],
+			['Receipts', 0]
+		]);
+	});
+
+	it('finds parents by name, whatever the delimiter or slashes in names', () => {
+		expect(
+			nested([
+				{ path: 'INBOX', name: 'INBOX', depth: 0 },
+				{ path: 'INBOX.Receipts', name: 'Receipts', depth: 1 },
+				{ path: 'Inbox', name: 'Inbox', depth: 0 },
+				{ path: 'Inbox/A/B', name: 'A/B', depth: 1 }
+			])
+		).toEqual([
+			['INBOX', 0],
+			['INBOX.Receipts', 1],
+			['Inbox', 0],
+			['Inbox/A/B', 1]
+		]);
+	});
+
+	it('makes a folder whose parent is not listed a root', () => {
+		expect(
+			nested([
+				{ path: 'INBOX', name: 'INBOX', depth: 0 },
+				{ path: '[Gmail]/Spam', name: 'Spam', depth: 1 },
+				{ path: '[Gmail]/Starred', name: 'Starred', depth: 1 }
+			])
+		).toEqual([
+			['INBOX', 0],
+			['[Gmail]/Spam', 0],
+			['[Gmail]/Starred', 0]
+		]);
 	});
 });
 

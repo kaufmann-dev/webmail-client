@@ -37,6 +37,30 @@ interface NamedFolder {
 	depth: number;
 }
 
+/**
+ * Folders in tree order, each followed by its subfolders, with their depth in that tree. Roots
+ * and siblings keep their order in `folders`. A folder whose parent is not listed (such as
+ * Gmail's unselectable `[Gmail]`) is a root, so subfolders of role folders sit below them.
+ */
+export function nestFolders<T extends NamedFolder>(folders: T[]): { folder: T; depth: number }[] {
+	const paths = new Set(folders.map((f) => f.path));
+	const children = new Map<string | null, T[]>();
+	for (const folder of folders) {
+		const parent = folder.depth ? folder.path.slice(0, -folder.name.length - 1) : null;
+		const key = parent !== null && paths.has(parent) ? parent : null;
+		children.set(key, [...(children.get(key) ?? []), folder]);
+	}
+	const nested: { folder: T; depth: number }[] = [];
+	const visit = (parent: string | null, depth: number) => {
+		for (const folder of children.get(parent) ?? []) {
+			nested.push({ folder, depth });
+			visit(folder.path, depth + 1);
+		}
+	};
+	visit(null, 0);
+	return nested;
+}
+
 /** A folder's path once renamed to `name`: the parent path and its delimiter stay. */
 export function renamedPath(folder: NamedFolder, name: string): string {
 	return folder.path.slice(0, folder.path.length - folder.name.length) + name;
