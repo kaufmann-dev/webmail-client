@@ -1,3 +1,5 @@
+import type { FolderRole } from './mail-types.js';
+
 /** A folder list row: whether it has subfolders and whether they show. */
 export interface TreeRow<T> {
 	item: T;
@@ -37,6 +39,41 @@ interface NamedFolder {
 	depth: number;
 }
 
+/** The path of the folder that holds `folder`; null at the top level. */
+export function parentPath(folder: NamedFolder): string | null {
+	return folder.depth ? folder.path.slice(0, -folder.name.length - 1) : null;
+}
+
+/**
+ * The folders `folder` can move into, in tree order with their depth: all but itself and its
+ * subfolders, and without role folders unless `roles` is set.
+ */
+export function moveParents<T extends NamedFolder & { role: FolderRole | null }>(
+	folder: NamedFolder,
+	entries: T[],
+	options: { roles: boolean }
+): { folder: T; depth: number }[] {
+	return nestFolders(entries.filter((entry) => options.roles || !entry.role)).filter(
+		({ folder: entry }) => !isWithin(entry.path, folder, entries)
+	);
+}
+
+/**
+ * The path of `folder` once moved below `parent` (null: the top level). The delimiter is taken
+ * from a nested entry; null when no entry is nested, so it cannot be known.
+ */
+export function movedPath(
+	folder: NamedFolder,
+	parent: string | null,
+	entries: NamedFolder[]
+): string | null {
+	if (parent === null) return folder.name;
+	const nested = entries.find((entry) => entry.depth > 0);
+	if (!nested) return null;
+	const delimiter = nested.path.charAt(nested.path.length - nested.name.length - 1);
+	return parent + delimiter + folder.name;
+}
+
 /**
  * Folders in tree order, each followed by its subfolders, with their depth in that tree. Roots
  * and siblings keep their order in `folders`. A folder whose parent is not listed (such as
@@ -46,7 +83,7 @@ export function nestFolders<T extends NamedFolder>(folders: T[]): { folder: T; d
 	const paths = new Set(folders.map((f) => f.path));
 	const children = new Map<string | null, T[]>();
 	for (const folder of folders) {
-		const parent = folder.depth ? folder.path.slice(0, -folder.name.length - 1) : null;
+		const parent = parentPath(folder);
 		const key = parent !== null && paths.has(parent) ? parent : null;
 		children.set(key, [...(children.get(key) ?? []), folder]);
 	}

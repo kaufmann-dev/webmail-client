@@ -232,6 +232,16 @@ describe('requests', () => {
 		);
 	});
 
+	it('moves folders below a parent or to the top level by escaped ID', () => {
+		expect(request.moveFolder('F"1', 'P1')).toBe(
+			'<m:MoveFolder><m:ToFolderId><t:FolderId Id="P1"/></m:ToFolderId>' +
+				'<m:FolderIds><t:FolderId Id="F&quot;1"/></m:FolderIds></m:MoveFolder>'
+		);
+		expect(request.moveFolder('F1')).toContain(
+			'<m:ToFolderId><t:DistinguishedFolderId Id="msgfolderroot"/></m:ToFolderId>'
+		);
+	});
+
 	it('creates, renames, and deletes folders by escaped ID and name', () => {
 		expect(request.createFolder('A&B')).toContain(
 			'<m:ParentFolderId><t:DistinguishedFolderId Id="msgfolderroot"/></m:ParentFolderId>'

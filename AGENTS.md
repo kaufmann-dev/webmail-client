@@ -38,8 +38,8 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
 - All IMAP/SMTP and Exchange access goes through `src/lib/server/mail/`. Routes and MCP tools never
   talk to `imapflow`, `nodemailer`, or Exchange directly. The public functions in `messages.ts`,
   `folders.ts`, `compose.ts`, and `accounts.ts` branch on `provider === 'exchange'`.
-  - `folders.ts`: listing (cached) and creating, renaming, and deleting folders. Role folders
-    cannot be renamed or deleted; deleting is permanent and includes subfolders (IMAP deletes them
+  - `folders.ts`: listing (cached) and creating, renaming, moving, and deleting folders. Role folders
+    cannot be renamed, moved, or deleted; deleting is permanent and includes subfolders (IMAP deletes them
     deepest first, Exchange uses `HardDelete`). With `onlyEmpty` (MCP), a folder whose subtree
     still holds messages is refused.
   - `imap.ts`: the per-account connection pool (`withClient`, `withMailbox`). Account failures are
@@ -130,8 +130,8 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
   - `create_meeting` needs `organize` for drafts and `send` to send, like `compose_new_message`;
     `find_meeting_times` needs `read`. `update_meeting` and `cancel_meeting` need `send`.
   - Folder tools need `organize`. `delete_folder` deletes only empty folders, since a full delete
-    would also destroy messages outside the time window. `rename_folder` rewrites the short refs
-    of messages in the renamed subtree (`McpRefs.folderRenamed`).
+    would also destroy messages outside the time window. `rename_folder` and `move_folder` rewrite
+    the short refs of messages in the changed subtree (`McpRefs.folderMoved`).
 - Tool results are compact JSON that leave out defaults: boolean flags only when true, `account`
   only when results span several accounts, `to` in lists only when it is not just the account.
 - Attachment bytes never pass through tool calls. `get_attachment` returns readable content

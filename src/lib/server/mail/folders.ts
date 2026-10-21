@@ -1,5 +1,6 @@
 import type { ListResponse } from 'imapflow';
 import { FOLDER_ROLE_LABELS, FOLDER_ROLES, isFolderRole, type FolderRole } from '../../mail-types';
+import { isWithin, parentPath } from '../../folder-tree';
 import { MailError } from './errors';
 import {
 	createArchiveFolder,
@@ -9,6 +10,7 @@ import {
 	ewsFolderTotal,
 	inboxUnreadCount,
 	invalidateEwsFolders,
+	moveEwsFolder,
 	renameEwsFolder
 } from './ews/folders';
 import { withClient } from './imap';
@@ -140,11 +142,6 @@ function requireNoDelimiter(name: string, delimiter: string | null | undefined):
 	}
 }
 
-/** The path of the folder that holds `folder`; null at the top level. */
-function parentOf(folder: Folder): string | null {
-	return folder.depth ? folder.path.slice(0, -folder.name.length - 1) : null;
-}
-
 async function findFolder(account: MailAccount, path: string): Promise<Folder> {
 	const folder = (await getFolders(account)).find((f) => f.path === path);
 	if (!folder) throw new MailError('That folder does not exist.', 404);
@@ -168,7 +165,7 @@ async function requireFreeName(
 ): Promise<void> {
 	const taken = (await getFolders(account)).some(
 		(f) =>
-			f.path !== except && parentOf(f) === parent && f.name.toLowerCase() === name.toLowerCase()
+			f.path !== except && parentPath(f) === parent && f.name.toLowerCase() === name.toLowerCase()
 	);
 	if (taken) throw new MailError(`A folder named "${name}" already exists here.`, 409);
 }
@@ -201,17 +198,51 @@ export async function renameFolder(
 	rawName: string
 ): Promise<{ path: string; delimiter: string | null }> {
 	const name = folderName(rawName);
-	const parent = parentOf(await customFolder(account, path));
+	const parent = parentPath(await customFolder(account, path));
 	await requireFreeName(account, parent, name, path);
 	if (account.provider === 'exchange') return renameEwsFolder(account, path, parent, name);
-	const renamed = await withClient(account, async (client) => {
+	return relocateImapFolder(account, path, parent, name);
+}
+
+/**
+ * Moves a folder with its subfolders below `parent` (a path) or to the top level, keeping its
+ * name. Returns its new path and the hierarchy delimiter, as `renameFolder` does.
+ */
+export async function moveFolder(
+	account: MailAccount,
+	path: string,
+	parent: string | null
+): Promise<{ path: string; delimiter: string | null }> {
+	const folder = await customFolder(account, path);
+	if (parent !== null) {
+		await findFolder(account, parent);
+		if (isWithin(parent, folder, await getFolders(account))) {
+			throw new MailError('A folder cannot move into itself or one of its subfolders.', 400);
+		}
+	}
+	if (parentPath(folder) === parent) {
+		throw new MailError(`"${folder.name}" is already there.`, 400);
+	}
+	await requireFreeName(account, parent, folder.name, path);
+	if (account.provider === 'exchange') return moveEwsFolder(account, path, parent, folder.name);
+	return relocateImapFolder(account, path, parent, folder.name);
+}
+
+/** Renames an IMAP folder to `name` below `parent`; its subfolders move along. */
+async function relocateImapFolder(
+	account: MailAccount,
+	path: string,
+	parent: string | null,
+	name: string
+): Promise<{ path: string; delimiter: string | null }> {
+	const relocated = await withClient(account, async (client) => {
 		const delimiter = client.namespace?.delimiter || null;
 		requireNoDelimiter(name, delimiter);
 		const result = await client.mailboxRename(path, parent ? [parent, name] : name);
 		return { path: result.newPath, delimiter };
 	});
 	invalidateFolders(account.id);
-	return renamed;
+	return relocated;
 }
 
 function requireEmpty(path: string, count: number): void {

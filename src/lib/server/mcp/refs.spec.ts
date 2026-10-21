@@ -63,7 +63,7 @@ describe('McpRefs', () => {
 		expect(decodeLocator((await refs.resolve(id)).locator)).toEqual(['acc', 'Archive', '99', 5]);
 	});
 
-	it('follows a renamed folder in the same account only', async () => {
+	it('follows a renamed or moved folder in the same account only', async () => {
 		const ref = (accountId: string, path: string) =>
 			encodeMessageRef({ kind: 'imap', accountId, path, uidValidity: '7', uid: 1 });
 		const refs = new McpRefs('u1', memoryStore());
@@ -72,7 +72,7 @@ describe('McpRefs', () => {
 			{ ref: ref('acc', 'Work2'), accountId: 'acc', messageId: null },
 			{ ref: ref('other', 'Work'), accountId: 'other', messageId: null }
 		]);
-		await refs.folderRenamed('acc', 'Work', 'Jobs', '/');
+		await refs.folderMoved('acc', 'Work', 'Jobs', '/');
 		const locator = async (r: string) => (await refs.resolve(short.get(r)!)).locator;
 		expect(await locator(ref('acc', 'Work/Old'))).toBe(ref('acc', 'Jobs/Old'));
 		expect(await locator(ref('acc', 'Work2'))).toBe(ref('acc', 'Work2'));

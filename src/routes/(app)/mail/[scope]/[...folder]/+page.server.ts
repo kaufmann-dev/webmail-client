@@ -4,7 +4,7 @@ import { INVITATION_RESPONSES, type MessageDetail } from '#lib/mail-types.js';
 import { getAccount } from '#lib/server/mail/accounts.js';
 import { respondToInvitation } from '#lib/server/mail/compose.js';
 import { errorMessage, MailError } from '#lib/server/mail/errors.js';
-import { createFolder, deleteFolder, renameFolder } from '#lib/server/mail/folders.js';
+import { createFolder, deleteFolder, moveFolder, renameFolder } from '#lib/server/mail/folders.js';
 import { InvalidMessageRefError } from '#lib/server/mail/message-ref.js';
 import {
 	deleteMessages,
@@ -60,14 +60,18 @@ async function run(fn: () => Promise<void>) {
 	}
 }
 
-/** The account and fields of a folder action; `path` is the parent when creating. */
+/**
+ * The account and fields of a folder action; `path` is the parent when creating, and `parent` the
+ * destination when moving.
+ */
 async function folderFields(request: Request, userId: string) {
 	const form = await request.formData();
 	const field = (name: string) => String(form.get(name) ?? '');
 	return {
 		account: await getAccount(userId, field('account')),
 		path: field('path'),
-		name: field('name')
+		name: field('name'),
+		parent: field('parent')
 	};
 }
 
@@ -113,6 +117,11 @@ export const actions: Actions = {
 		run(async () => {
 			const { account, path, name } = await folderFields(request, locals.user.id);
 			await renameFolder(account, path, name);
+		}),
+	moveFolder: ({ request, locals }) =>
+		run(async () => {
+			const { account, path, parent } = await folderFields(request, locals.user.id);
+			await moveFolder(account, path, parent || null);
 		}),
 	deleteFolder: ({ request, locals }) =>
 		run(async () => {

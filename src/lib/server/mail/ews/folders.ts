@@ -172,6 +172,23 @@ export async function renameEwsFolder(
 	return { path: parent ? `${parent}/${name}` : name, delimiter: '/' };
 }
 
+/** Moves the folder `name` at `path` below `parent` (a path) or to the top level. */
+export async function moveEwsFolder(
+	account: MailAccount,
+	path: string,
+	parent: string | null,
+	name: string
+): Promise<{ path: string; delimiter: string }> {
+	const [id, parentId] = await Promise.all([
+		folderIdOf(account, path),
+		parent ? folderIdOf(account, parent) : undefined
+	]);
+	const [message] = await ewsCall(account, request.moveFolder(id, parentId));
+	checkFolder(message, name);
+	invalidateEwsFolders(account.id);
+	return { path: parent ? `${parent}/${name}` : name, delimiter: '/' };
+}
+
 /** The number of messages in a folder and all its subfolders. */
 export async function ewsFolderTotal(account: MailAccount, path: string): Promise<number> {
 	const id = await folderIdOf(account, path);

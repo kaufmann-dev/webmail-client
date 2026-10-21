@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { isWithin, nestFolders, renamedPath, visibleTree } from './folder-tree';
+import {
+	isWithin,
+	movedPath,
+	moveParents,
+	nestFolders,
+	parentPath,
+	renamedPath,
+	visibleTree
+} from './folder-tree';
 
 const folders = [
 	{ key: 'Projects', depth: 0 },
@@ -90,6 +98,62 @@ describe('nestFolders', () => {
 			['[Gmail]/Spam', 0],
 			['[Gmail]/Starred', 0]
 		]);
+	});
+});
+
+describe('parentPath', () => {
+	it('cuts the name and its delimiter, and is null at the top level', () => {
+		expect(parentPath({ path: 'Inbox/Projects', name: 'Projects', depth: 1 })).toBe('Inbox');
+		expect(parentPath({ path: 'Inbox/A/B', name: 'A/B', depth: 1 })).toBe('Inbox');
+		expect(parentPath({ path: 'Receipts', name: 'Receipts', depth: 0 })).toBeNull();
+	});
+});
+
+describe('moveParents', () => {
+	const entries = [
+		{ path: 'Inbox', name: 'Inbox', depth: 0, role: 'inbox' as const },
+		{ path: 'Inbox/Projects', name: 'Projects', depth: 1, role: null },
+		{ path: 'Inbox/Projects/Alpha', name: 'Alpha', depth: 2, role: null },
+		{ path: 'Trash', name: 'Trash', depth: 0, role: 'trash' as const },
+		{ path: 'Receipts', name: 'Receipts', depth: 0, role: null }
+	];
+	const paths = (rows: ReturnType<typeof moveParents>) =>
+		rows.map(({ folder, depth }) => [folder.path, depth]);
+
+	it('leaves out the folder and its subfolders', () => {
+		expect(paths(moveParents(entries[1], entries, { roles: true }))).toEqual([
+			['Inbox', 0],
+			['Trash', 0],
+			['Receipts', 0]
+		]);
+	});
+
+	it('leaves out role folders unless they are allowed', () => {
+		expect(paths(moveParents(entries[4], entries, { roles: false }))).toEqual([
+			['Inbox/Projects', 0],
+			['Inbox/Projects/Alpha', 1]
+		]);
+	});
+});
+
+describe('movedPath', () => {
+	it('joins the parent and the name with the delimiter of a nested entry', () => {
+		const imap = [
+			{ path: 'INBOX', name: 'INBOX', depth: 0 },
+			{ path: 'INBOX.Receipts', name: 'Receipts', depth: 1 }
+		];
+		expect(movedPath(imap[1], null, imap)).toBe('Receipts');
+		expect(movedPath({ path: 'Notes', name: 'Notes', depth: 0 }, 'INBOX', imap)).toBe(
+			'INBOX.Notes'
+		);
+	});
+
+	it('is null below a parent when no entry shows the delimiter', () => {
+		const flat = [
+			{ path: 'Inbox', name: 'Inbox', depth: 0 },
+			{ path: 'Receipts', name: 'Receipts', depth: 0 }
+		];
+		expect(movedPath(flat[1], 'Inbox', flat)).toBeNull();
 	});
 });
 

@@ -130,8 +130,8 @@ export class McpRefs {
 		return this.store.relocate(this.userId, moves);
 	}
 
-	/** Points the refs of messages in a renamed folder and its subfolders at the new paths. */
-	async folderRenamed(
+	/** Points the refs of messages in a renamed or moved folder and its subfolders at the new paths. */
+	async folderMoved(
 		accountId: string,
 		from: string,
 		to: string,

@@ -117,6 +117,15 @@ export function renameFolder(id: string, name: string): string {
 	);
 }
 
+/** Moves a folder with its subfolders and items below `parentId`, or to the top level. */
+export function moveFolder(id: string, parentId?: string): string {
+	const parent = parentId ? folderId(parentId) : '<t:DistinguishedFolderId Id="msgfolderroot"/>';
+	return (
+		`<m:MoveFolder><m:ToFolderId>${parent}</m:ToFolderId>` +
+		`<m:FolderIds>${folderId(id)}</m:FolderIds></m:MoveFolder>`
+	);
+}
+
 /** Deletes a folder with its subfolders and items, bypassing Deleted Items. */
 export function deleteFolder(id: string): string {
 	return `<m:DeleteFolder DeleteType="HardDelete"><m:FolderIds>${folderId(id)}</m:FolderIds></m:DeleteFolder>`;

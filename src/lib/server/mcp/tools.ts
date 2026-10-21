@@ -31,6 +31,7 @@ import {
 	createFolder,
 	deleteFolder,
 	getFolders,
+	moveFolder,
 	renameFolder,
 	requireFolder,
 	resolveFolder
@@ -376,7 +377,7 @@ export function createMcpServer(
 			title: 'List folders',
 			description:
 				"Lists an account's folders. Standard folders have a role (inbox, drafts, sent, archive, spam, trash) usable as the folder argument elsewhere. " +
-				'create_folder, rename_folder, and delete_folder manage the others.',
+				'create_folder, rename_folder, move_folder, and delete_folder manage the others.',
 			inputSchema: z.object({ account: accountRef }),
 			annotations: { readOnlyHint: true }
 		},
@@ -437,8 +438,39 @@ export function createMcpServer(
 			guard(async () => {
 				const account = access.require(accountArg, 'organize');
 				const renamed = await renameFolder(account, folder, name);
-				await refs.folderRenamed(account.id, folder, renamed.path, renamed.delimiter);
+				await refs.folderMoved(account.id, folder, renamed.path, renamed.delimiter);
 				return { path: renamed.path };
+			})
+	);
+
+	server.registerTool(
+		'move_folder',
+		{
+			title: 'Move folder',
+			description:
+				'Moves a folder with its subfolders below parent, or to the top level when parent is omitted; its ' +
+				'name stays. Standard (role) folders cannot be moved. Returns the new path. message_refs of the ' +
+				'messages inside stay valid.',
+			inputSchema: z.object({
+				account: accountRef,
+				folder: folderPath,
+				parent: z
+					.string()
+					.min(1)
+					.optional()
+					.describe(
+						'A role (such as inbox) or folder path to move it into; omit for the top level.'
+					)
+			}),
+			annotations: { destructiveHint: false, idempotentHint: false }
+		},
+		({ account: accountArg, folder, parent }) =>
+			guard(async () => {
+				const account = access.require(accountArg, 'organize');
+				const parentPath = parent ? await requireFolder(account, parent) : null;
+				const moved = await moveFolder(account, folder, parentPath);
+				await refs.folderMoved(account.id, folder, moved.path, moved.delimiter);
+				return { path: moved.path };
 			})
 	);
 

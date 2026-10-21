@@ -15,8 +15,9 @@ and on the consent screen you choose which mail accounts each app may use and at
   unified view (`/mail/<id>+<id>/inbox`). Switching keeps the kind of folder you are in, and `0`–`9` switch from the
   keyboard. Lists are grouped by date (Today, Yesterday, This week, Last week, then by month).
   Also search (Gmail search syntax for Gmail), unread and starred filters, multi-select
-  actions, moving messages by dragging them onto a folder, creating, renaming, and deleting an
-  account's own folders from the sidebar, keyboard shortcuts (`?` lists them), and a conversation
+  actions, moving messages by dragging them onto a folder, creating, renaming, moving, and deleting
+  an account's own folders from the sidebar (subfolders also below Inbox and the other standard
+  folders, except on Gmail), keyboard shortcuts (`?` lists them), and a conversation
   view.
 - **Reading:** HTML mail renders in a sandboxed frame with no scripts. Remote images load right
   away, except in Spam, where they stay blocked until you load them.
@@ -164,6 +165,7 @@ shows these steps with copyable commands for the deployed URL.
 | `update_messages`          | Read & organize  | Mark read/unread, star, archive, trash, spam, or move                             |
 | `create_folder`            | Read & organize  | Create a folder at the top level or below another folder                          |
 | `rename_folder`            | Read & organize  | Rename a custom folder in place; message refs inside stay valid                   |
+| `move_folder`              | Read & organize  | Move a custom folder and its subfolders; message refs inside stay valid           |
 | `delete_folder`            | Read & organize  | Delete an empty custom folder; refuses folders that still hold messages           |
 | `reply_to_message`         | Organize or Full | Threaded reply or reply-all with the quote; `mode` is `draft` (default) or `send` |
 | `forward_message`          | Organize or Full | Forward with the original headers, and attachments if allowed                     |

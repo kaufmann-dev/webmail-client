@@ -28,7 +28,7 @@
 	import { Kbd } from '#lib/components/ui/kbd/index.js';
 	import * as Sheet from '#lib/components/ui/sheet/index.js';
 	import { Spinner } from '#lib/components/ui/spinner/index.js';
-	import { isWithin, renamedPath } from '#lib/folder-tree.js';
+	import { isWithin, movedPath, renamedPath } from '#lib/folder-tree.js';
 	import { postAction } from '#lib/form-action.js';
 	import { scopeIds, singleAccount, switchedFolder, viewedRole } from '#lib/mail-scope.js';
 	import {
@@ -137,17 +137,35 @@
 	const FOLDER_ACTIONS = {
 		create: 'createFolder',
 		rename: 'renameFolder',
+		move: 'moveFolder',
 		delete: 'deleteFolder'
 	} as const;
 
-	/** Runs a folder change; a renamed or deleted open folder is followed or left for the inbox. */
-	async function changeFolder(request: FolderRequest, name: string) {
+	/** The open folder's path after `request`; the inbox when it was deleted or cannot be known. */
+	function followedFolder(
+		request: Exclude<FolderRequest, { kind: 'create' }>,
+		value: string
+	): string {
+		const moved =
+			request.kind === 'rename'
+				? renamedPath(request.folder, value)
+				: request.kind === 'move'
+					? movedPath(request.folder, value || null, folders[request.accountId] ?? [])
+					: null;
+		return moved === null ? 'inbox' : moved + data.folder.slice(request.folder.path.length);
+	}
+
+	/**
+	 * Runs a folder change; a renamed, moved, or deleted open folder is followed or left for the
+	 * inbox. `value` is the new name, or the destination path when moving.
+	 */
+	async function changeFolder(request: FolderRequest, value: string) {
 		folderRequest = null;
 		const path = request.kind === 'create' ? (request.parent?.path ?? '') : request.folder.path;
 		const error = await postAction(`${basePath}?/${FOLDER_ACTIONS[request.kind]}`, {
 			account: request.accountId,
 			path,
-			name
+			...(request.kind === 'move' ? { parent: value } : { name: value })
 		});
 		if (error) {
 			toast.error(error);
@@ -158,10 +176,7 @@
 			data.scope === request.accountId &&
 			isWithin(data.folder, request.folder, folders[data.scope] ?? [])
 		) {
-			const folder =
-				request.kind === 'rename'
-					? renamedPath(request.folder, name) + data.folder.slice(request.folder.path.length)
-					: 'inbox';
+			const folder = followedFolder(request, value);
 			await goto(resolve('/(app)/mail/[scope]/[...folder]', { scope: data.scope, folder }), {
 				replace: true
 			});
@@ -782,6 +797,7 @@
 
 <FolderDialog
 	request={folderRequest}
+	folders={folderRequest ? (folders[folderRequest.accountId] ?? []) : []}
 	gmail={folderRequest ? accountsById.get(folderRequest.accountId)?.provider === 'gmail' : false}
 	onsubmit={changeFolder}
 	onclose={() => (folderRequest = null)}

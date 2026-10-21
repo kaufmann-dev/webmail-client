@@ -4,6 +4,7 @@
 	import { resolve } from '$app/paths';
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 	import Ellipsis from '@lucide/svelte/icons/ellipsis';
+	import FolderInput from '@lucide/svelte/icons/folder-input';
 	import FolderPlus from '@lucide/svelte/icons/folder-plus';
 	import Pencil from '@lucide/svelte/icons/pencil';
 	import Plus from '@lucide/svelte/icons/plus';
@@ -186,7 +187,7 @@
 			<span class="w-6 shrink-0" aria-hidden="true"></span>
 		{/if}
 		{@render folderLink(link, 0)}
-		{#if account && link.entry && !link.entry.role && onfolder}
+		{#if account && link.entry && onfolder && (!link.entry.role || account.provider !== 'gmail')}
 			{@render folderMenu(account.id, link.entry)}
 		{/if}
 	</div>
@@ -213,17 +214,26 @@
 				<FolderPlus />
 				New subfolder
 			</DropdownMenu.Item>
-			<DropdownMenu.Item onSelect={() => onfolder?.({ kind: 'rename', accountId, folder: entry })}>
-				<Pencil />
-				Rename
-			</DropdownMenu.Item>
-			<DropdownMenu.Item
-				variant="destructive"
-				onSelect={() => onfolder?.({ kind: 'delete', accountId, folder: entry })}
-			>
-				<Trash2 />
-				Delete
-			</DropdownMenu.Item>
+			<!-- Role folders cannot be renamed, moved, or deleted. -->
+			{#if !entry.role}
+				<DropdownMenu.Item
+					onSelect={() => onfolder?.({ kind: 'rename', accountId, folder: entry })}
+				>
+					<Pencil />
+					Rename
+				</DropdownMenu.Item>
+				<DropdownMenu.Item onSelect={() => onfolder?.({ kind: 'move', accountId, folder: entry })}>
+					<FolderInput />
+					Move…
+				</DropdownMenu.Item>
+				<DropdownMenu.Item
+					variant="destructive"
+					onSelect={() => onfolder?.({ kind: 'delete', accountId, folder: entry })}
+				>
+					<Trash2 />
+					Delete
+				</DropdownMenu.Item>
+			{/if}
 		</DropdownMenu.Content>
 	</DropdownMenu.Root>
 {/snippet}
