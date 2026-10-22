@@ -177,6 +177,7 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
   accounts still loading. The first document load streams both stages (`streamed` in
   `src/lib/streamed.svelte.ts`), so the shell shows at once; data requests (navigations and
   refreshes) await the first stage, keeping the current view until then. Only the first stage
-  counts as new data for applied changes.
+  counts as new data for applied changes. Narrowing the account selection within the same view hides the other
+  accounts' messages at once (`narrowedScope`) while the new list loads.
 - Every `overflow-y-auto` scroll area is also `relative`. Otherwise `sr-only` labels inside it
   (absolutely positioned) are placed against the page and stretch it past the `h-dvh` shell.

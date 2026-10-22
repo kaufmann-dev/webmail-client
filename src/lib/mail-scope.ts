@@ -24,6 +24,18 @@ export function scopeAccountIds(scope: string, accounts: { id: string }[]): stri
 	return accounts.map((a) => a.id).filter((id) => !ids || ids.includes(id));
 }
 
+/** The accounts of `to` when it covers only some of the accounts of `from`, else null. */
+export function narrowedScope(
+	from: string,
+	to: string,
+	accounts: { id: string }[]
+): Set<string> | null {
+	if (from === to) return null;
+	const current = new Set(scopeAccountIds(from, accounts));
+	const next = scopeAccountIds(to, accounts);
+	return next.every((id) => current.has(id)) ? new Set(next) : null;
+}
+
 /** The canonical scope of a selection: `all` for every account (or none), else the IDs in order. */
 export function scopeFor(ids: Iterable<string>, accounts: { id: string }[]): string {
 	const chosen = new Set(ids);

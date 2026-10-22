@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	narrowedScope,
 	scopeAccountIds,
 	scopeFor,
 	singleAccount,
@@ -67,5 +68,13 @@ describe('scopes', () => {
 		expect(toggledScope('a+c', 'b', accounts)).toBe('all');
 		expect(toggledScope('a+c', 'a', accounts)).toBe('c');
 		expect(toggledScope('a', 'a', accounts)).toBe('a');
+	});
+
+	it('finds the accounts left when a view narrows', () => {
+		expect(narrowedScope('all', 'a+c', accounts)).toEqual(new Set(['a', 'c']));
+		expect(narrowedScope('a+c', 'c', accounts)).toEqual(new Set(['c']));
+		expect(narrowedScope('a', 'all', accounts)).toBeNull();
+		expect(narrowedScope('a', 'b', accounts)).toBeNull();
+		expect(narrowedScope('a+c', 'a+c', accounts)).toBeNull();
 	});
 });

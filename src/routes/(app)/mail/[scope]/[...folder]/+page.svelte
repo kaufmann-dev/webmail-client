@@ -30,7 +30,13 @@
 	import { Spinner } from '#lib/components/ui/spinner/index.js';
 	import { isWithin, movedPath, renamedPath } from '#lib/folder-tree.js';
 	import { postAction } from '#lib/form-action.js';
-	import { scopeIds, singleAccount, switchedFolder, viewedRole } from '#lib/mail-scope.js';
+	import {
+		narrowedScope,
+		scopeIds,
+		singleAccount,
+		switchedFolder,
+		viewedRole
+	} from '#lib/mail-scope.js';
 	import {
 		FOLDER_ROLE_LABELS,
 		LIST_FILTERS,
@@ -80,6 +86,13 @@
 		const filter = target.url.searchParams.get('filter');
 		return LIST_FILTERS.find((f) => f === filter) ?? 'all';
 	});
+	// Narrowing the accounts of the same view hides the others' messages at once while it loads.
+	const narrowedTo = $derived.by(() => {
+		if (!target || activeFolder !== data.folder || activeFilter !== data.filter) return null;
+		if ((target.url.searchParams.get('q')?.trim() ?? '') !== data.query) return null;
+		return narrowedScope(data.scope, activeScope, data.accounts);
+	});
+	const shownAccount = (accountId: string) => !narrowedTo || narrowedTo.has(accountId);
 
 	// Reset whenever the server sends a fresh list; "Load more" appends locally.
 	let loaded = $derived(list?.messages ?? []);
@@ -203,7 +216,7 @@
 		const applied = unsettled(listSerial);
 		const gone = new Set(applied.filter((c) => c.remove).flatMap((c) => [...c.refs]));
 		return loaded
-			.filter((m) => !gone.has(m.ref) && !leavingDrafts.has(m.ref))
+			.filter((m) => !gone.has(m.ref) && !leavingDrafts.has(m.ref) && shownAccount(m.accountId))
 			.map((m) => withFlags(m, applied));
 	});
 
@@ -681,12 +694,12 @@
 		</div>
 
 		<div class="relative min-h-0 flex-1 overflow-y-auto">
-			{#each list?.errors ?? [] as failure (failure.accountId)}
+			{#each (list?.errors ?? []).filter( (f) => shownAccount(f.accountId) ) as failure (failure.accountId)}
 				<p class="border-b bg-muted px-3 py-2 text-sm wrap-anywhere" role="status">
 					{failure.message}
 				</p>
 			{/each}
-			{#each list?.pending ?? [] as accountId (accountId)}
+			{#each (list?.pending ?? []).filter(shownAccount) as accountId (accountId)}
 				<p class="border-b bg-muted px-3 py-2 text-sm wrap-anywhere" role="status">
 					Waiting for {accountsById.get(accountId)?.email ?? 'an account'}…
 				</p>
@@ -701,7 +714,7 @@
 				</div>
 			{:else if listData.failed}
 				<p class="p-6 text-sm">The messages could not be loaded.</p>
-			{:else if !list}
+			{:else if !list || (narrowedTo && !messages.length)}
 				<div class="flex p-6"><Spinner aria-label="Loading messages" class="m-auto" /></div>
 			{:else if !messages.length}
 				<p class="p-6 text-sm text-muted-foreground">
@@ -724,7 +737,7 @@
 					ondragstart={(refs) => (dragging = refs)}
 					ondragend={() => (dragging = null)}
 				/>
-				{#if cursor}
+				{#if cursor && !narrowedTo}
 					<div class="p-3">
 						<Button variant="outline" class="w-full" onclick={loadMore} disabled={loadingMore}>
 							{#if loadingMore}<Spinner aria-label="Loading more messages" />{/if}
