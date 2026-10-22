@@ -42,8 +42,10 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
     cannot be renamed, moved, or deleted; deleting is permanent and includes subfolders (IMAP deletes them
     deepest first, Exchange uses `HardDelete`). With `onlyEmpty` (MCP), a folder whose subtree
     still holds messages is refused.
-  - `imap.ts`: the per-account connection pool (`withClient`, `withMailbox`). Account failures are
-    recorded in `mail_account.last_error` through `account-status.ts`.
+  - `imap.ts`: the per-account connection pool (`withClient`, `withMailbox`). A command silent for
+    30 s (`socketTimeout`) closes the connection; requests still waiting for the mailbox lock then
+    retry once on a new one. Account failures are recorded in `mail_account.last_error` through
+    `account-status.ts`.
   - `ews/`: Exchange accounts over Exchange Web Services (SOAP, Basic authentication, the account's
     `server` and optional `username`), with no IMAP: `client.ts` (requests and errors),
     `requests.ts` (request bodies), `items.ts` (response mapping), `folders.ts`, `messages.ts`,

@@ -7,6 +7,12 @@ import type { MailAccount } from './types';
 
 /** Just under the 30-minute idle logout of most servers, so returning to the tab finds it open. */
 const IDLE_CLOSE_MS = 25 * 60_000;
+/**
+ * A command silent this long means a dead connection, which is closed so the next request
+ * reconnects. imapflow's default is 5 minutes, all of which every request for the account would
+ * spend waiting for the mailbox lock. Commands that keep receiving data are never cut off.
+ */
+const SOCKET_TIMEOUT_MS = 30_000;
 
 interface PoolEntry {
 	client?: ImapFlow;
@@ -26,7 +32,8 @@ export function createImapClient(provider: ImapProvider, auth: MailAuth): ImapFl
 		auth,
 		logger: false,
 		connectionTimeout: 20_000,
-		greetingTimeout: 20_000
+		greetingTimeout: 20_000,
+		socketTimeout: SOCKET_TIMEOUT_MS
 	});
 	// Socket errors also surface as rejected commands; without a listener they would crash the process.
 	client.on('error', () => {});
@@ -150,8 +157,16 @@ export function withMailbox<T>(
 	path: string,
 	fn: (client: ImapFlow, mailbox: MailboxObject) => Promise<T>
 ): Promise<T> {
-	return withClient(account, async (client) => {
-		const lock = await client.getMailboxLock(path, { acquireTimeout: 60_000 });
+	return withClient(account, async (pooled) => {
+		let client = pooled;
+		const lockOn = (c: ImapFlow) => c.getMailboxLock(path, { acquireTimeout: 60_000 });
+		const lock = await lockOn(client).catch(async (error: { code?: string }) => {
+			// The connection closed while this waited (e.g. a stuck command timed out) and nothing
+			// ran yet, so start again on a new one.
+			if (error?.code !== 'NoConnection') throw error;
+			client = await getClient(account);
+			return lockOn(client);
+		});
 		try {
 			return await fn(client, client.mailbox as MailboxObject);
 		} finally {
