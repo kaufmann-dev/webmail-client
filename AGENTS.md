@@ -53,7 +53,9 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
     which needs a UTC zone with two distinct transitions; sent meetings found by UID in a calendar
     view of their time). Lists page by position. Reading fetches the
     calendar part of meeting messages and of messages carrying a calendar part (meeting drafts).
-  - `messages.ts`: listing, search, reading, moving, and threads. Reading fetches only body text,
+  - `messages.ts`: listing, search, reading, moving, and threads. The web list's first page uses
+    `listMessagesInStages` (accounts still loading are left out of paging); MCP and "Load more"
+    use `listMessages`, which waits for every account. Reading fetches only body text,
     calendar parts, and embedded images (`structure.ts`); attachments download on demand. Read
     messages stay in an in-memory cache that `setFlags`, `moveMessages`, and `deleteMessages` keep
     current.
@@ -166,8 +168,13 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
 - The open message streams from the page load, which must stay free of side effects because links
   preload on tap (not hover, which would queue reads ahead of the click) and the next message
   preloads after one opens. The page marks a message read once it is shown.
-- The first document load also streams the message list, folders, and unread counts (`streamed` in
-  `src/lib/streamed.svelte.ts`), so the shell shows at once. Data requests (navigations and
-  refreshes) await them instead, keeping the current view until the next one is ready.
+- The message list, folders, and unread counts load in two stages (`inStages` in
+  `src/lib/server/mail/stages.ts`), so one slow account blocks nothing: `list` / `mailboxes` hold
+  the accounts that answered within 4 s, `lateList` / `lateMailboxes` all of them (null when the
+  first stage had them all; an account that never answers fails after 60 s). The list names the
+  accounts still loading. The first document load streams both stages (`streamed` in
+  `src/lib/streamed.svelte.ts`), so the shell shows at once; data requests (navigations and
+  refreshes) await the first stage, keeping the current view until then. Only the first stage
+  counts as new data for applied changes.
 - Every `overflow-y-auto` scroll area is also `relative`. Otherwise `sr-only` labels inside it
   (absolutely positioned) are placed against the page and stretch it past the `h-dvh` shell.

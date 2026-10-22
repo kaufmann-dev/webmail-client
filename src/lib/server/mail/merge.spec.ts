@@ -58,6 +58,13 @@ describe('mergePages', () => {
 		expect(mergePages(pages, 10, {}).cursor).toBeNull();
 	});
 
+	it('keeps accounts seeded as done out of further pages', () => {
+		const pages = [{ accountId: 'a', items: [msg('a', 2, '2026-01-02')], exhausted: false }];
+		expect(mergePages(pages, 10, { b: 0 }).cursor).toEqual({ a: 2, b: 0 });
+		const done = [{ accountId: 'a', items: [msg('a', 1, '2026-01-01')], exhausted: true }];
+		expect(mergePages(done, 10, { b: 0 }).cursor).toBeNull();
+	});
+
 	it('round-trips cursors and ignores garbage', () => {
 		expect(decodeCursor(encodeCursor({ a: 5, b: 0 }))).toEqual({ a: 5, b: 0 });
 		expect(decodeCursor('%%%')).toEqual({});

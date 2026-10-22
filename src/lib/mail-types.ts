@@ -211,6 +211,8 @@ export interface MessagePage {
 	messages: MessageSummary[];
 	nextCursor: string | null;
 	errors: AccountError[];
+	/** Accounts still loading; their messages are not in this page yet. */
+	pending: string[];
 }
 
 /** The editor's starting state; carried attachments stay on the server until sending. */

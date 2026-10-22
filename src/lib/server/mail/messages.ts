@@ -32,6 +32,7 @@ import {
 	type MessageLocator
 } from './message-ref';
 import { sanitizeEmailHtml, textToHtml } from './render';
+import { inStages } from './stages';
 import {
 	assembleSource,
 	decodePartStart,
@@ -209,6 +210,35 @@ export interface ListOptions {
 	threads?: boolean;
 }
 
+/** One account's page of a folder (a role such as `inbox` or a path), newest first. */
+async function accountPage(
+	account: MailAccount,
+	folder: string,
+	filters: MessageFilters,
+	beforeCursor: number | undefined,
+	limit: number,
+	options: ListOptions
+): Promise<AccountPage> {
+	const path = await resolveFolder(account, folder);
+	if (!path) return { accountId: account.id, items: [], exhausted: true };
+	const notBefore = options.notBefore?.get(account.id);
+	const accountFilters = notBefore ? withinWindow(filters, notBefore) : filters;
+	const page =
+		account.provider === 'exchange'
+			? await ews.listPage(account, path, accountFilters, beforeCursor, limit, {
+					threads: options.threads
+				})
+			: await fetchAccountPage(
+					account,
+					path,
+					buildSearch(account, accountFilters),
+					beforeCursor,
+					limit,
+					options.threads ?? false
+				);
+	return notBefore ? trimPage(page, notBefore) : page;
+}
+
 /**
  * Lists one folder (a role such as `inbox` or a path) across the given accounts, newest first,
  * merged by date. An unreachable account is reported in `errors` instead of failing the list.
@@ -228,24 +258,7 @@ export async function listMessages(
 			.filter((account) => cursor[account.id] !== 0)
 			.map(async (account): Promise<AccountPage | null> => {
 				try {
-					const path = await resolveFolder(account, folder);
-					if (!path) return { accountId: account.id, items: [], exhausted: true };
-					const notBefore = options.notBefore?.get(account.id);
-					const accountFilters = notBefore ? withinWindow(filters, notBefore) : filters;
-					const page =
-						account.provider === 'exchange'
-							? await ews.listPage(account, path, accountFilters, cursor[account.id], limit, {
-									threads: options.threads
-								})
-							: await fetchAccountPage(
-									account,
-									path,
-									buildSearch(account, accountFilters),
-									cursor[account.id],
-									limit,
-									options.threads ?? false
-								);
-					return notBefore ? trimPage(page, notBefore) : page;
+					return await accountPage(account, folder, filters, cursor[account.id], limit, options);
 				} catch (error) {
 					errors.push({ accountId: account.id, message: errorMessage(error) });
 					return null;
@@ -260,7 +273,54 @@ export async function listMessages(
 	return {
 		messages: merged.messages,
 		nextCursor: merged.cursor ? encodeCursor(merged.cursor) : null,
-		errors
+		errors,
+		pending: []
+	};
+}
+
+type AccountResult = { page: AccountPage } | { error: AccountError };
+
+function mergeResults(results: Iterable<AccountResult>, pending: string[]): MessagePage {
+	const pages: AccountPage[] = [];
+	const errors: AccountError[] = [];
+	for (const result of results) {
+		if ('page' in result) pages.push(result.page);
+		else errors.push(result.error);
+	}
+	// Accounts still loading count as done for paging, so "Load more" never puts their newest mail
+	// below older mail of the others.
+	const merged = mergePages(
+		pages,
+		DEFAULT_PAGE_SIZE,
+		Object.fromEntries(pending.map((id) => [id, 0]))
+	);
+	return {
+		messages: merged.messages,
+		nextCursor: merged.cursor ? encodeCursor(merged.cursor) : null,
+		errors,
+		pending
+	};
+}
+
+/**
+ * The first page of a folder for the web app, in the two stages of `inStages`: `early` without
+ * the accounts that are slow to answer (named in `pending`), `late` with all of them.
+ */
+export function listMessagesInStages(
+	accounts: MailAccount[],
+	folder: string,
+	filters: MessageFilters
+): { early: Promise<MessagePage>; late: Promise<MessagePage | null> } {
+	const stages = inStages<AccountResult>(
+		accounts,
+		async (account) => ({
+			page: await accountPage(account, folder, filters, undefined, DEFAULT_PAGE_SIZE, {})
+		}),
+		(account, error) => ({ error: { accountId: account.id, message: errorMessage(error) } })
+	);
+	return {
+		early: stages.early.then(({ results, pending }) => mergeResults(results.values(), pending)),
+		late: stages.late.then((results) => results && mergeResults(results.values(), []))
 	};
 }
 

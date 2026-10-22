@@ -286,24 +286,13 @@ export async function deleteFolder(
 	invalidateFolders(account.id);
 }
 
-/** INBOX unread counts; null for accounts that could not be reached. */
-export async function inboxUnreadCounts(
-	accounts: MailAccount[]
-): Promise<Record<string, number | null>> {
-	const entries = await Promise.all(
-		accounts.map(async (account) => {
-			try {
-				if (account.provider === 'exchange') {
-					return [account.id, await inboxUnreadCount(account)] as const;
-				}
-				const status = await withClient(account, (client) =>
-					client.status('INBOX', { unseen: true })
-				);
-				return [account.id, status ? (status.unseen ?? 0) : null] as const;
-			} catch {
-				return [account.id, null] as const;
-			}
-		})
-	);
-	return Object.fromEntries(entries);
+/** The INBOX unread count; null when the account could not be reached. */
+export async function inboxUnread(account: MailAccount): Promise<number | null> {
+	try {
+		if (account.provider === 'exchange') return await inboxUnreadCount(account);
+		const status = await withClient(account, (client) => client.status('INBOX', { unseen: true }));
+		return status ? (status.unseen ?? 0) : null;
+	} catch {
+		return null;
+	}
 }

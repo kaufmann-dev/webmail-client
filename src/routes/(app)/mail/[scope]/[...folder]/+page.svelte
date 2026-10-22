@@ -45,13 +45,15 @@
 	let { data } = $props();
 
 	// Held as stable references: opening a message replaces `data` but not these. The first page
-	// streams them in.
+	// streams them in; accounts that answered late replace them once they arrive.
 	const listData = $derived(streamed(data.list));
-	const list = $derived(listData.current);
-	const foldersData = $derived(streamed(data.folders));
-	const folders = $derived(foldersData.current ?? {});
-	const unreadData = $derived(streamed(data.unread));
-	const serverUnread = $derived(unreadData.current ?? {});
+	const lateListData = $derived(streamed(data.lateList));
+	const list = $derived(lateListData.current ?? listData.current);
+	const mailboxesData = $derived(streamed(data.mailboxes));
+	const lateMailboxesData = $derived(streamed(data.lateMailboxes));
+	const mailboxes = $derived(lateMailboxesData.current ?? mailboxesData.current);
+	const folders = $derived(mailboxes?.folders ?? {});
+	const serverUnread = $derived(mailboxes?.unread ?? {});
 	const opened = $derived(data.message);
 
 	const accountsById = $derived(new Map(data.accounts.map((a) => [a.id, a])));
@@ -114,12 +116,13 @@
 	 */
 	let changes = $state.raw<Change[]>([]);
 	const refreshes = { count: 0 };
+	// A late stage was requested with its early one, so only the early one counts as new data.
 	const listSerial = $derived.by(() => {
-		void list;
+		void listData.current;
 		return refreshes.count;
 	});
 	const countsSerial = $derived.by(() => {
-		void serverUnread;
+		void mailboxesData.current;
 		return refreshes.count;
 	});
 	const running = $derived(changes.filter((c) => c.done === null));
@@ -474,7 +477,7 @@
 	<MailSidebar
 		accounts={data.accounts}
 		{folders}
-		loading={!foldersData.current}
+		loading={!mailboxesData.current}
 		{unread}
 		scope={activeScope}
 		folder={activeFolder}
@@ -681,6 +684,11 @@
 			{#each list?.errors ?? [] as failure (failure.accountId)}
 				<p class="border-b bg-muted px-3 py-2 text-sm wrap-anywhere" role="status">
 					{failure.message}
+				</p>
+			{/each}
+			{#each list?.pending ?? [] as accountId (accountId)}
+				<p class="border-b bg-muted px-3 py-2 text-sm wrap-anywhere" role="status">
+					Waiting for {accountsById.get(accountId)?.email ?? 'an account'}…
 				</p>
 			{/each}
 			{#if !data.accounts.length}
