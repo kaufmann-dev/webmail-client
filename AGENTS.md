@@ -70,7 +70,11 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
     SMTP (it does not enter the user's calendar there). `updateMeeting` and `cancelMeeting` change
     a sent, non-recurring meeting from its invitation: Exchange updates or cancels the calendar
     item, SMTP sends the request again with a higher `SEQUENCE` (and a CANCEL to removed
-    attendees) or an iMIP CANCEL.
+    attendees) or an iMIP CANCEL. When only the attendees change, only added (or role-changed)
+    and removed attendees hear of it (`meetingNotices` in `invitations.ts`): Exchange uses
+    `SendToChangedAndSaveCopy` and takes the attendees from the calendar item, since such an
+    update names only its recipients; SMTP keeps every attendee in the headers and limits the
+    envelope (`sendDraft`'s `deliverTo`, which stores only a Sent copy when it is empty).
   - `body-text.ts`: bodies as plain text for AI clients (`ReadMessage.detail.text`) from the HTML
     when there is one: decoded entities, Markdown data tables, `[image: name]`, and the new text
     without quoted messages (`ReadMessage.newText`, by quote containers first, then text patterns;

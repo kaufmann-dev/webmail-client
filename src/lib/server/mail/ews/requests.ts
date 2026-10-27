@@ -462,10 +462,15 @@ function deleteCalendarField(uri: string): string {
 }
 
 /**
- * Updates a meeting the user organizes and sends the update to its attendees; Exchange sends
- * cancellations to removed attendees itself.
+ * Updates a meeting the user organizes, with a copy of the update in Sent Items. A change of only
+ * the attendees goes to the added and removed ones (invitation or cancellation); any other change
+ * goes to all attendees, and removed ones get a cancellation.
  */
 export function updateMeeting(item: CalendarItemId, changes: MeetingChanges): string {
+	const { subject, html, start, end, location } = changes;
+	const send = [subject, html, start, end, location].every((value) => value === undefined)
+		? 'SendToChangedAndSaveCopy'
+		: 'SendToAllAndSaveCopy';
 	const updates = [
 		changes.subject !== undefined &&
 			setCalendarField('item:Subject', `<t:Subject>${escapeXml(changes.subject)}</t:Subject>`),
@@ -497,7 +502,7 @@ export function updateMeeting(item: CalendarItemId, changes: MeetingChanges): st
 	].filter((update): update is string => typeof update === 'string');
 	return (
 		'<m:UpdateItem MessageDisposition="SaveOnly" ConflictResolution="AutoResolve"' +
-		' SendMeetingInvitationsOrCancellations="SendToAllAndSaveCopy"><m:ItemChanges>' +
+		` SendMeetingInvitationsOrCancellations="${send}"><m:ItemChanges>` +
 		`<t:ItemChange>${calendarItemId('ItemId', item)}<t:Updates>${updates.join('')}</t:Updates></t:ItemChange>` +
 		'</m:ItemChanges></m:UpdateItem>'
 	);

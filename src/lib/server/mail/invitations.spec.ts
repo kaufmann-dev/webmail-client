@@ -5,6 +5,7 @@ import {
 	findCalendarPart,
 	invitationReply,
 	meetingCancellation,
+	meetingNotices,
 	meetingRequest,
 	parseInvitation
 } from './invitations';
@@ -279,6 +280,39 @@ describe('meetingCancellation', () => {
 		const event = new ICAL.Component(ICAL.parse(ics)).getFirstSubcomponent('vevent')!;
 		expect(event.getFirstPropertyValue('status')).toBe('CANCELLED');
 		expect(event.getFirstProperty('attendee')?.getParameter('rsvp')).toBeUndefined();
+	});
+});
+
+describe('meetingNotices', () => {
+	const alex = { name: 'Alex', address: 'alex@example.com' };
+	const sam = { name: '', address: 'sam@example.com' };
+	const kim = { name: 'Kim', address: 'kim@example.com' };
+	const lee = { name: '', address: 'lee@example.com' };
+	const before = { required: [alex, sam], optional: [kim] };
+
+	it('tells only added and removed attendees when only the attendees change', () => {
+		const after = { required: [alex, { ...lee, address: 'LEE@example.com' }], optional: [kim] };
+		expect(meetingNotices(before, after, false)).toEqual({
+			request: [{ ...lee, address: 'LEE@example.com' }],
+			cancel: [sam]
+		});
+		const moved = { required: [alex, sam], optional: [] };
+		expect(meetingNotices(before, { ...moved, required: [alex, sam, kim] }, false)).toEqual({
+			request: [kim],
+			cancel: []
+		});
+	});
+
+	it('tells all attendees about other changes', () => {
+		expect(meetingNotices(before, before, true)).toEqual({ request: [alex, sam, kim], cancel: [] });
+	});
+
+	it('tells all current attendees and cancels for removed ones in mixed changes', () => {
+		const after = { required: [alex, lee], optional: [kim] };
+		expect(meetingNotices(before, after, true)).toEqual({
+			request: [alex, lee, kim],
+			cancel: [sam]
+		});
 	});
 });
 

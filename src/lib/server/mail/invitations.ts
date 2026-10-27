@@ -280,3 +280,37 @@ export function meetingCancellation(meeting: MeetingRequest, now = new Date()): 
 	event.addPropertyWithValue('status', 'CANCELLED');
 	return calendar.toString();
 }
+
+/** The attendees of a meeting: `required` and `optional`. */
+export interface MeetingAttendees {
+	required: Address[];
+	optional: Address[];
+}
+
+/**
+ * Who hears about a change to a sent meeting: `request` gets the updated invitation, `cancel` a
+ * cancellation. When only the attendees change, attendees who keep their role hear nothing.
+ */
+export function meetingNotices(
+	before: MeetingAttendees,
+	after: MeetingAttendees,
+	othersChanged: boolean
+): { request: Address[]; cancel: Address[] } {
+	const roles = (attendees: MeetingAttendees) =>
+		new Map([
+			...attendees.optional.map((a) => [a.address.toLowerCase(), 'optional'] as const),
+			...attendees.required.map((a) => [a.address.toLowerCase(), 'required'] as const)
+		]);
+	const was = roles(before);
+	const is = roles(after);
+	const changed = (a: Address, role: string) => was.get(a.address.toLowerCase()) !== role;
+	return {
+		request: othersChanged
+			? [...after.required, ...after.optional]
+			: [
+					...after.required.filter((a) => changed(a, 'required')),
+					...after.optional.filter((a) => changed(a, 'optional'))
+				],
+		cancel: [...before.required, ...before.optional].filter((a) => !is.has(a.address.toLowerCase()))
+	};
+}

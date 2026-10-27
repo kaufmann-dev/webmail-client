@@ -140,7 +140,8 @@ shows these steps with copyable commands for the deployed URL.
   another message without downloading it. Links are kept in memory only, bound to the user and
   app, and downloads check the app's access again when fetched.
 - **Meetings:** `create_meeting` invites attendees (a draft unless sending was asked for),
-  `update_meeting` and `cancel_meeting` change or cancel a meeting the user sent, and
+  `update_meeting` and `cancel_meeting` change or cancel a meeting the user sent (changing only
+  the attendees notifies only those added or removed), and
   `find_meeting_times` finds times that suit everyone on Exchange accounts.
 - **Changing access:** Settings → Connected apps edits these choices at any time. Changes take effect
   on the app's next request. Revoking an app deletes its consent, grants, and refresh tokens.
@@ -174,7 +175,7 @@ shows these steps with copyable commands for the deployed URL.
 | `respond_to_invitation`    | Full             | Accept, tentatively accept, or decline an invitation; sends immediately           |
 | `find_meeting_times`       | Read             | Busy times and times that suit everyone (Exchange only)                           |
 | `create_meeting`           | Organize or Full | Invite attendees to a new meeting; `mode` is `draft` (default) or `send`          |
-| `update_meeting`           | Full             | Change time, title, location, or attendees of a sent meeting; sends immediately   |
+| `update_meeting`           | Full             | Change a sent meeting; sends immediately, attendee-only changes to those affected |
 | `cancel_meeting`           | Full             | Cancel a sent meeting; sends immediately                                          |
 
 Every tool that lists or uses messages only reaches those within the account's time window.

@@ -18,6 +18,7 @@ import { withClient, withMailbox } from './imap';
 import {
 	invitationReply,
 	meetingCancellation,
+	meetingNotices,
 	meetingRequest,
 	parseInvitation,
 	type MeetingRequest
@@ -311,12 +312,18 @@ export interface SendResult {
 
 /**
  * Sends over SMTP (or through Exchange), stores a Sent copy where the provider does not, removes
- * the draft it came from, and marks the answered message.
+ * the draft it came from, and marks the answered message. Over SMTP, `deliverTo` limits delivery
+ * to some of the recipients while the message still names all of them; with none, the message is
+ * only stored in Sent.
  */
 export async function sendDraft(
 	userId: string,
 	input: Draft,
-	options: { replacesDraftRef?: string | null; answersRef?: string | null } = {}
+	options: {
+		replacesDraftRef?: string | null;
+		answersRef?: string | null;
+		deliverTo?: Address[];
+	} = {}
 ): Promise<SendResult> {
 	const account = await getAccount(userId, input.accountId);
 	const draft = withMeetingUid(account, input);
@@ -324,6 +331,7 @@ export async function sendDraft(
 	checkMeeting(draft, true);
 	const messageId = newMessageId(account);
 	const date = new Date();
+	const deliverTo = options.deliverTo?.map((a) => a.address) ?? recipients(draft);
 	if (account.provider === 'exchange' && draft.meeting) {
 		// A calendar item: Exchange sends the invitations, keeps the meeting, and tracks the answers.
 		try {
@@ -346,11 +354,11 @@ export async function sendDraft(
 		} catch (error) {
 			throw new MailError(`Sending failed: ${errorMessage(error)}`, 502);
 		}
-	} else {
+	} else if (deliverTo.length) {
 		const raw = await buildRaw(account, draft, { messageId, date, keepBcc: false });
 		const transport = createSmtpTransport(account.provider, await mailAuth(account));
 		try {
-			await transport.sendMail({ envelope: { from: account.email, to: recipients(draft) }, raw });
+			await transport.sendMail({ envelope: { from: account.email, to: deliverTo }, raw });
 		} catch (error) {
 			throw new MailError(`Sending failed: ${errorMessage(error)}`, 502);
 		} finally {
@@ -358,8 +366,12 @@ export async function sendDraft(
 		}
 	}
 
-	// The message is out; the follow-up bookkeeping must not report the send as failed.
-	if (account.provider !== 'exchange' && PROVIDER_CONFIG[account.provider].appendToSent) {
+	// The message is out; the follow-up bookkeeping must not report the send as failed. A message
+	// delivered to no one gets no Sent copy from the provider either.
+	if (
+		account.provider !== 'exchange' &&
+		(PROVIDER_CONFIG[account.provider].appendToSent || !deliverTo.length)
+	) {
 		const sent = await resolveFolder(account, 'sent').catch(() => null);
 		if (sent) {
 			const copy = await buildRaw(account, draft, { messageId, date, keepBcc: true });
@@ -502,9 +514,11 @@ export interface MeetingUpdate {
 }
 
 /**
- * Changes a meeting the user sent and sends the update to its attendees at once. Exchange updates
- * the calendar item (and tells removed attendees itself); other accounts send the invitation again
- * with a higher sequence, and a cancellation to removed attendees.
+ * Changes a meeting the user sent and tells the attendees at once. When only the attendees change,
+ * added attendees (and those whose role changed) get the invitation, removed ones a cancellation,
+ * and the others nothing; any other change goes to all attendees. Exchange updates the calendar
+ * item and notifies the attendees itself; other accounts send the invitation again with a higher
+ * sequence, and a cancellation to removed attendees.
  */
 export async function updateMeeting(
 	userId: string,
@@ -536,24 +550,31 @@ export async function updateMeeting(
 	if (!updated.to.length) throw new MailError('A meeting needs a required attendee.', 400);
 	checkMeeting(updated, true);
 	const timeChanged = start !== was.start || end !== was.end;
+	const subjectChanged = updated.subject !== current.subject;
+	const locationChanged = updated.meeting.location !== was.location;
+	const othersChanged =
+		timeChanged || subjectChanged || locationChanged || changes.html !== undefined;
+	if (!othersChanged && !changes.required && !changes.optional) {
+		throw new MailError('Nothing changes in this meeting.', 400);
+	}
 
 	if (account.provider === 'exchange') {
-		await ews.updateMeeting(account, was, {
-			subject: changes.subject,
+		const attendees = await ews.updateMeeting(account, was, {
+			subject: subjectChanged ? updated.subject : undefined,
 			html:
 				changes.html === undefined
 					? undefined
 					: outgoingHtml(withoutDataImages(changes.html), toSummary(account).font),
 			start: timeChanged ? start : undefined,
 			end: timeChanged ? end : undefined,
-			location: changes.location,
+			location: locationChanged ? updated.meeting.location : undefined,
 			required: changes.required,
 			optional: changes.optional
 		});
 		return {
 			messageId: null,
-			to: updated.to,
-			cc: updated.cc,
+			to: attendees.required,
+			cc: attendees.optional,
 			bcc: [],
 			subject: updated.subject,
 			start,
@@ -561,15 +582,26 @@ export async function updateMeeting(
 		};
 	}
 
-	const result = await sendDraft(userId, updated);
-	const kept = new Set([...updated.to, ...updated.cc].map((a) => a.address.toLowerCase()));
-	const removed = [...current.to, ...current.cc].filter((a) => !kept.has(a.address.toLowerCase()));
-	if (removed.length) {
+	const notices = meetingNotices(
+		{ required: current.to, optional: current.cc },
+		{ required: updated.to, optional: updated.cc },
+		othersChanged
+	);
+	if (!notices.request.length && !notices.cancel.length) {
+		throw new MailError('Nothing changes for any attendee.', 400);
+	}
+	if (notices.cancel.length) {
 		await sendDraft(
 			userId,
-			cancellation(account, { ...updated, to: removed, cc: [] }, textToComposeHtml(CANCELED_TEXT))
+			cancellation(
+				account,
+				{ ...updated, to: notices.cancel, cc: [] },
+				textToComposeHtml(CANCELED_TEXT)
+			)
 		);
 	}
+	// Sent last and naming every attendee, so the latest update in Sent describes the meeting.
+	const result = await sendDraft(userId, updated, { deliverTo: notices.request });
 	return { ...result, start, end };
 }
 

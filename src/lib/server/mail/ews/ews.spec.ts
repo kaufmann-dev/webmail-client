@@ -358,11 +358,22 @@ describe('meetings', () => {
 					'<t:CalendarItemType>Single</t:CalendarItemType></t:CalendarItem></m:Items></m:GetItemResponseMessage>' +
 					'<m:GetItemResponseMessage ResponseClass="Success"><m:Items><t:CalendarItem>' +
 					'<t:ItemId Id="MINE" ChangeKey="K1"/><t:UID>ABC</t:UID><t:IsOrganizer>true</t:IsOrganizer>' +
-					'<t:CalendarItemType>Single</t:CalendarItemType></t:CalendarItem></m:Items></m:GetItemResponseMessage>' +
+					'<t:CalendarItemType>Single</t:CalendarItemType><t:RequiredAttendees>' +
+					'<t:Attendee><t:Mailbox><t:Name>Alex</t:Name><t:EmailAddress>alex@example.com</t:EmailAddress></t:Mailbox></t:Attendee>' +
+					'<t:Attendee><t:Mailbox><t:EmailAddress>kim@example.com</t:EmailAddress></t:Mailbox></t:Attendee>' +
+					'</t:RequiredAttendees></t:CalendarItem></m:Items></m:GetItemResponseMessage>' +
 					'</m:ResponseMessages></m:GetItemResponse>'
 			)
 		);
-		expect(organizedMeetingOf(messages, 'abc')).toEqual({ id: 'MINE', changeKey: 'K1' });
+		expect(organizedMeetingOf(messages, 'abc')).toEqual({
+			id: 'MINE',
+			changeKey: 'K1',
+			required: [
+				{ name: 'Alex', address: 'alex@example.com' },
+				{ name: '', address: 'kim@example.com' }
+			],
+			optional: []
+		});
 		expect(organizedMeetingOf(messages, 'other')).toBeNull();
 	});
 
@@ -385,6 +396,15 @@ describe('meetings', () => {
 		expect(body).toContain('<t:OptionalAttendees><t:Attendee>');
 		expect(body).not.toContain('item:Subject');
 		expect(body).not.toContain('RequiredAttendees');
+	});
+
+	it('tells only the added and removed attendees when only the attendees change', () => {
+		const body = request.updateMeeting(
+			{ id: 'A1', changeKey: 'K1' },
+			{ required: [{ name: '', address: 'lee@example.com' }], optional: [] }
+		);
+		expect(body).toContain('SendMeetingInvitationsOrCancellations="SendToChangedAndSaveCopy"');
+		expect(body).toContain('<t:RequiredAttendees><t:Attendee>');
 	});
 
 	it('cancels with the item reference before the note', () => {

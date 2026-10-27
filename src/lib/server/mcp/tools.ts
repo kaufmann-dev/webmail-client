@@ -101,7 +101,7 @@ and the attendees and the times that suit everyone. create_meeting invites atten
 other sending tools it saves a draft unless the user asked to send. Exchange puts sent meetings in
 the user's calendar; other accounts send the invitation by email only, so the user adds the
 meeting to their own calendar. update_meeting and cancel_meeting change or cancel a meeting the
-user sent, given the invitation in Sent Items; they notify the attendees immediately.`;
+user sent, given the invitation in Sent Items; they notify the affected attendees immediately.`;
 
 function json(value: unknown): CallToolResult {
 	return { content: [{ type: 'text', text: JSON.stringify(value) }] };
@@ -1216,10 +1216,13 @@ export function createMcpServer(
 		{
 			title: 'Update meeting',
 			description:
-				'Changes a meeting the user organized and sent (not recurring) and sends the update to all ' +
-				'attendees immediately; there is no draft mode. Only use it when the user asked to change the ' +
-				'meeting. Fields left out stay as they are; a new start without an end keeps the duration. ' +
-				"Exchange accounts update the user's calendar; other accounts email the update.",
+				'Changes a meeting the user organized and sent (not recurring) and notifies attendees ' +
+				'immediately; there is no draft mode. Only use it when the user asked to change the meeting. ' +
+				'If only required and optional change, added attendees (and those moved between required and ' +
+				'optional) get the invitation, removed attendees a cancellation, and everyone else nothing. ' +
+				'Any other change sends the update to all attendees, and removed attendees get a ' +
+				'cancellation. Fields left out stay as they are; a new start without an end keeps the ' +
+				"duration. Exchange accounts update the user's calendar; other accounts email the update.",
 			inputSchema: z.object({
 				message_ref: sentInvitationRef,
 				subject: z.string().min(1).max(998).optional(),

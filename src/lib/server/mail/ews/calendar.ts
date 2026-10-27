@@ -1,8 +1,8 @@
-import type { MailboxAvailability } from '../../../mail-types';
+import type { Address, MailboxAvailability } from '../../../mail-types';
 import { MailError } from '../errors';
 import type { MailAccount } from '../types';
 import { check, ewsCall, ewsOperation, failed } from './client';
-import { firstItem, itemId, itemsOf } from './items';
+import { firstItem, itemId, itemsOf, mailboxes } from './items';
 import * as request from './requests';
 import { attr, child, list, text, type XmlNode } from './xml';
 
@@ -48,16 +48,29 @@ export async function availability(
 	return availabilityOf(response, addresses);
 }
 
-const MEETING_FIELDS = ['calendar:UID', 'calendar:IsOrganizer', 'calendar:CalendarItemType'];
+const MEETING_FIELDS = [
+	'calendar:UID',
+	'calendar:IsOrganizer',
+	'calendar:CalendarItemType',
+	'calendar:RequiredAttendees',
+	'calendar:OptionalAttendees'
+];
+
+/** A meeting the user organizes in the calendar, with its attendees. */
+export interface OrganizedMeeting extends request.CalendarItemId {
+	required: Address[];
+	optional: Address[];
+}
+
+/** The mailboxes of an attendee list such as `RequiredAttendees`. */
+const attendeesOf = (container: XmlNode | undefined) =>
+	list(container?.Attendee).flatMap((attendee) => mailboxes(attendee));
 
 /**
  * The single (not recurring) meeting the user organizes with this iCalendar UID, among the
  * `GetItem` response messages of calendar items.
  */
-export function organizedMeetingOf(
-	messages: XmlNode[],
-	uid: string
-): request.CalendarItemId | null {
+export function organizedMeetingOf(messages: XmlNode[], uid: string): OrganizedMeeting | null {
 	const wanted = uid.toLowerCase();
 	for (const message of messages) {
 		const node = failed(message) ? null : firstItem(message)?.node;
@@ -67,7 +80,12 @@ export function organizedMeetingOf(
 			text(node.IsOrganizer) === 'true' &&
 			text(node.CalendarItemType) === 'Single'
 		) {
-			return { id: itemId(node), changeKey: attr(child(node, 'ItemId'), 'ChangeKey') };
+			return {
+				id: itemId(node),
+				changeKey: attr(child(node, 'ItemId'), 'ChangeKey'),
+				required: attendeesOf(child(node, 'RequiredAttendees')),
+				optional: attendeesOf(child(node, 'OptionalAttendees'))
+			};
 		}
 	}
 	return null;
@@ -79,7 +97,7 @@ export async function findOrganizedMeeting(
 	uid: string,
 	start: string,
 	end: string
-): Promise<request.CalendarItemId> {
+): Promise<OrganizedMeeting> {
 	const [view] = await ewsCall(account, request.calendarView(start, end));
 	const ids = itemsOf(child(child(check(view), 'RootFolder'), 'Items')).map(({ node }) =>
 		itemId(node)
