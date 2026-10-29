@@ -62,8 +62,10 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
     through Drafts), for up to 15 minutes after they were submitted; later they show again, as
     stuck, so they can be deleted. A submitted item is never a draft. Flag updates change the
     items still there and then throw `MessageGoneError` for any that are gone. Reading fetches the calendar part of meeting messages and of messages
-    carrying a calendar part (meeting drafts); a failed fetch fails the read rather than losing
-    the meeting, as does a failed fetch of embedded images, which would otherwise show as files. X.500 sender addresses are resolved in small batches, and only answers are
+    carrying a calendar part (meeting drafts); when that or the embedded images fail, the read is
+    `incomplete`: shown without them (MCP `get_message` says `incomplete`), never cached, and
+    refused for editing or sending drafts, answering invitations, and changing meetings, which
+    would lose the meeting or the images. X.500 sender addresses are resolved in small batches, and only answers are
     remembered.
   - `messages.ts`: listing, search, reading, moving, and threads. The web list's first page uses
     `listMessagesInStages` (accounts still loading are left out of paging); MCP and "Load more"

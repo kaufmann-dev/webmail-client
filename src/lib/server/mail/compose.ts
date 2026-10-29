@@ -173,6 +173,8 @@ export async function prepareForward(
 	};
 }
 
+const INCOMPLETE = 'Part of this message could not be loaded. Try again.';
+
 /** A saved draft, back as editable fields; its threading headers are kept. */
 export async function loadDraft(userId: string, ref: string): Promise<Draft> {
 	const { account, locator } = await resolveRef(userId, ref);
@@ -181,6 +183,8 @@ export async function loadDraft(userId: string, ref: string): Promise<Draft> {
 	const { detail } = read;
 	// Sending anything else would send a received message again, from the user.
 	if (!detail.draft) throw new MailError('This message is not a draft.', 400);
+	// Saving or sending it would lose what is missing (a meeting, or embedded images).
+	if (read.incomplete) throw new MailError(INCOMPLETE, 502);
 	const meeting = meetingOf(account, read);
 	if (meeting) {
 		return {
@@ -437,7 +441,8 @@ export async function respondToInvitation(
 	response: InvitationResponse
 ): Promise<SendResult> {
 	const { account, locator } = await resolveRef(userId, ref);
-	const { calendar, detail } = await getMessage(account, locator);
+	const { calendar, detail, incomplete } = await getMessage(account, locator);
+	if (!calendar && incomplete) throw new MailError(INCOMPLETE, 502);
 	if (!calendar) throw new MailError('This message has no invitation.', 400);
 	const reply = invitationReply(
 		calendar,
@@ -510,6 +515,7 @@ async function sentMeeting(
 ): Promise<{ account: MailAccount; current: MeetingDraft; item: ews.OrganizedMeeting | null }> {
 	const { account, locator } = await resolveRef(userId, ref);
 	const read = await getMessage(account, locator);
+	if (read.incomplete) throw new MailError(INCOMPLETE, 502);
 	const meeting = meetingOf(account, read);
 	if (!meeting) {
 		throw new MailError(

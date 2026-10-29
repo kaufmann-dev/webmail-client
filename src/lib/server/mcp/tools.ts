@@ -854,6 +854,8 @@ export function createMcpServer(
 					...(detail.inReplyTo && { in_reply_to: detail.inReplyTo }),
 					...attachments,
 					...(detail.invitation && { invitation: invitationOut(detail.invitation) }),
+					// Its calendar part or embedded images could not be fetched; reading again retries.
+					...(read.incomplete && { incomplete: true }),
 					...bodyOut(read, include_quoted, MAX_BODY_CHARS)
 				};
 			})

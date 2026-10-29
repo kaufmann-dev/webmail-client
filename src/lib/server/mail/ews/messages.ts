@@ -169,7 +169,7 @@ async function embedImages(
 	account: MailAccount,
 	html: string,
 	attachments: EwsAttachment[]
-): Promise<{ html: string; embedded: Set<string> }> {
+): Promise<{ html: string; embedded: Set<string>; complete: boolean }> {
 	const embedded = new Set<string>();
 	let budget = MAX_INLINE_BYTES;
 	const wanted = attachments.filter((a) => {
@@ -179,11 +179,12 @@ async function embedImages(
 		budget -= a.size;
 		return true;
 	});
-	// A failure fails the read, which is then not cached, rather than turning images into files.
+	// A failure leaves the images as files; the read is incomplete, so it is not cached.
 	const nodes = await getAttachmentNodes(
 		account,
 		wanted.map((a) => a.id)
-	);
+	).catch(() => null);
+	if (!nodes) return { html, embedded, complete: false };
 	nodes.forEach((node, index) => {
 		const attachment = wanted[index];
 		const content = attachmentContent(node).toString('base64');
@@ -191,7 +192,7 @@ async function embedImages(
 		html = html.split(`cid:${attachment.contentId}`).join(uri);
 		embedded.add(attachment.id);
 	});
-	return { html, embedded };
+	return { html, embedded, complete: true };
 }
 
 /** The iCalendar text of a message, from its MIME form. */
@@ -228,12 +229,18 @@ export async function readMessage(account: MailAccount, locator: EwsLocator): Pr
 	const bcc = mailboxes(child(node, 'BccRecipients'));
 	const replyTo = mailboxes(child(node, 'ReplyTo'));
 	// The follow-up requests depend only on the item, so they run together.
-	const [{ html, embedded }, calendar] = await Promise.all([
-		body ? embedImages(account, body, attachments) : { html: '', embedded: new Set<string>() },
+	let calendarFailed = false;
+	const [{ html, embedded, complete }, calendar] = await Promise.all([
+		body
+			? embedImages(account, body, attachments)
+			: { html: '', embedded: new Set<string>(), complete: true },
 		// Meeting messages, and messages saved with a calendar part (the user's meeting drafts, which
 		// Exchange may keep as ordinary messages with the part as an attachment).
 		text(node.ItemClass).startsWith('IPM.Schedule.Meeting') || attachments.some(isCalendarPart)
-			? meetingCalendar(account, locator.itemId)
+			? meetingCalendar(account, locator.itemId).catch(() => {
+					calendarFailed = true;
+					return null;
+				})
 			: null,
 		resolveAddresses(account, [summary.from, ...summary.to, ...cc, ...bcc, ...replyTo])
 	]);
@@ -262,7 +269,8 @@ export async function readMessage(account: MailAccount, locator: EwsLocator): Pr
 		detail,
 		newText: plain.newText,
 		sentAt: dateOrNull(text(node.DateTimeSent)),
-		calendar
+		calendar,
+		incomplete: !complete || calendarFailed
 	};
 }
 

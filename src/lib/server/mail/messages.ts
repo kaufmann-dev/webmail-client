@@ -436,6 +436,11 @@ export interface ReadMessage {
 	sentAt: Date | null;
 	/** The invitation's iCalendar text, when the message carries one. */
 	calendar: string | null;
+	/**
+	 * A part could not be fetched (Exchange's calendar part or embedded images), so the message
+	 * shows without it. Such a read is not cached, and drafts and invitations refuse it.
+	 */
+	incomplete: boolean;
 }
 
 function attachmentName(part: StructurePart): string {
@@ -514,7 +519,13 @@ async function readImapMessage(account: MailAccount, locator: ImapLocator): Prom
 		),
 		invitation
 	};
-	return { detail, newText: body.newText, sentAt: parsed.date ?? null, calendar };
+	return {
+		detail,
+		newText: body.newText,
+		sentAt: parsed.date ?? null,
+		calendar,
+		incomplete: false
+	};
 }
 
 const CACHE_TTL_MS = 10 * 60_000;
@@ -590,6 +601,11 @@ export function getMessage(
 	entry.value.then(
 		(read) => {
 			if (cache.get(key) !== entry) return;
+			// The next read tries the missing part again.
+			if (read.incomplete) {
+				forget(key);
+				return;
+			}
 			entry.read = read;
 			entry.bytes = readSize(read);
 			cachedBytes += entry.bytes;
