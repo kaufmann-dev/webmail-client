@@ -917,12 +917,40 @@ export async function moveMessages(
 	return moved;
 }
 
-/** Permanently deletes messages (flag \Deleted and expunge). Only offered for Trash and Spam. */
+/**
+ * Permanently deletes messages (flag \Deleted and expunge): offered for Trash and Spam, and used
+ * for replaced and sent drafts. Gmail deletes only from Trash; an expunge elsewhere just removes
+ * the label, which archives or trashes the message depending on the user's IMAP settings, so
+ * Gmail messages move to Trash first.
+ */
 export async function deleteMessages(groups: RefGroup[]): Promise<void> {
 	for (const group of groups) {
 		forgetGroup(group);
+		const trash =
+			group.kind === 'imap' && group.account.provider === 'gmail'
+				? await requireFolder(group.account, 'trash')
+				: null;
 		if (group.kind === 'ews') await ews.deleteItems(group.account, group.itemIds);
-		else {
+		else if (trash && trash !== group.path) {
+			const { uidMap } = await inGroup(group, async (client) =>
+				required(
+					await client.messageMove(group.uids, trash, { uid: true }),
+					group.account,
+					'delete the messages'
+				)
+			);
+			// Messages the server does not report stay in Trash, which Gmail empties after 30 days.
+			const uids = group.uids.map((uid) => uidMap?.get(uid)).filter((uid) => uid !== undefined);
+			if (uids.length) {
+				await withMailbox(group.account, trash, async (client) =>
+					required(
+						await client.messageDelete(uids, { uid: true }),
+						group.account,
+						'delete the messages'
+					)
+				);
+			}
+		} else {
 			await inGroup(group, async (client) =>
 				required(
 					await client.messageDelete(group.uids, { uid: true }),

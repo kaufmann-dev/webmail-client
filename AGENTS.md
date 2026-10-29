@@ -70,7 +70,9 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
     current; drafts are read `fresh`, since Exchange keeps a draft's item ID when another program
     edits it. imapflow reports failed commands as `false`: check every STORE, MOVE, EXPUNGE, and
     SEARCH result with `required` / `searchUids`. On Gmail, archiving outside Inbox, Spam, and
-    Trash removes the Inbox label and leaves the message where it is. Paged lists continue past
+    Trash removes the Inbox label and leaves the message where it is, and deleting (drafts
+    included) moves to Trash and expunges there, since an expunge elsewhere only removes the label
+    (archiving or trashing the message, per the user's Gmail IMAP settings). Paged lists continue past
     messages they leave out (`AccountPage.last`), and accounts that are slow or failed count as
     done for "Load more".
   - `compose.ts`: drafts and sending. Outgoing mail is HTML (`html-body.ts`: the document around
