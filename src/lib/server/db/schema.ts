@@ -126,3 +126,24 @@ export const invitationResponse = pgTable(
 	},
 	(table) => [primaryKey({ columns: [table.accountId, table.uid] })]
 );
+
+/**
+ * The newest version of each meeting the user changed or canceled from this app over SMTP, by
+ * iCalendar UID, so a change made from an older invitation continues from it. Holds identifiers
+ * only, never mail content.
+ */
+export const sentMeeting = pgTable(
+	'sent_meeting',
+	{
+		accountId: text('account_id')
+			.notNull()
+			.references(() => mailAccount.id, { onDelete: 'cascade' }),
+		uid: text('uid').notNull(),
+		sequence: integer('sequence').notNull(),
+		/** The Message-ID of that version's copy in Sent. */
+		messageId: text('message_id').notNull(),
+		canceled: boolean('canceled').notNull(),
+		sentAt: timestamp('sent_at').defaultNow().notNull()
+	},
+	(table) => [primaryKey({ columns: [table.accountId, table.uid] })]
+);

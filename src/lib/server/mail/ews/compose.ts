@@ -1,6 +1,6 @@
 import type { Address, InvitationResponse } from '../../../mail-types';
 import type { MailAccount } from '../types';
-import { findOrganizedMeeting } from './calendar';
+import type { OrganizedMeeting } from './calendar';
 import { check, ewsCall } from './client';
 import { firstItem, itemId } from './items';
 import * as request from './requests';
@@ -29,13 +29,7 @@ export async function createMeeting(
 	check(message);
 }
 
-/** A meeting the user sent, as its invitation describes it. */
-export interface SentMeeting {
-	uid: string;
-	/** ISO instants. */
-	start: string;
-	end: string;
-}
+export { findOrganizedMeeting, type OrganizedMeeting } from './calendar';
 
 /**
  * Changes a sent meeting in the calendar; Exchange tells the attendees the change affects (see
@@ -44,10 +38,9 @@ export interface SentMeeting {
  */
 export async function updateMeeting(
 	account: MailAccount,
-	meeting: SentMeeting,
+	item: OrganizedMeeting,
 	changes: request.MeetingChanges
 ): Promise<{ required: Address[]; optional: Address[] }> {
-	const item = await findOrganizedMeeting(account, meeting.uid, meeting.start, meeting.end);
 	const [message] = await ewsCall(account, request.updateMeeting(item, changes));
 	check(message);
 	return {
@@ -59,10 +52,9 @@ export async function updateMeeting(
 /** Cancels a sent meeting; Exchange tells the attendees and takes it out of the calendar. */
 export async function cancelMeeting(
 	account: MailAccount,
-	meeting: SentMeeting,
+	item: OrganizedMeeting,
 	html: string
 ): Promise<void> {
-	const item = await findOrganizedMeeting(account, meeting.uid, meeting.start, meeting.end);
 	const [message] = await ewsCall(account, request.cancelMeeting(item, html));
 	check(message);
 }

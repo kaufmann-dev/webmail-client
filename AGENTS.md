@@ -54,8 +54,9 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
     `compose.ts` (drafts and sending as MIME, meetings as calendar items, their updates and
     cancellations, native meeting responses), and `calendar.ts` (free/busy through
     `GetUserAvailability`, which `ewsOperation` calls because it has no response messages and
-    which needs a UTC zone with two distinct transitions; sent meetings found by UID in a calendar
-    view of their time). Lists page by received time (`timeCursors` in `items.ts`, so moving or
+    which needs a UTC zone with two distinct transitions; sent meetings found by UID wherever they
+    moved, through `PidLidCleanGlobalObjectId`, since Exchange's UIDs are that ID in hex, or in a
+    calendar view of their time for UIDs Exchange did not create). Lists page by received time (`timeCursors` in `items.ts`, so moving or
     flagging listed messages shifts no page; text searches page by position) and, like
     conversations, skip items Exchange is still sending (a sent meeting's invitation passes
     through Drafts). Reading fetches the calendar part of meeting messages and of messages
@@ -82,13 +83,18 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
     no Bcc or attachments): drafts are ordinary Drafts messages with an iMIP request part, which
     `meetingOf` reads back; sending creates an Exchange calendar item, or mails the request over
     SMTP (it does not enter the user's calendar there). `updateMeeting` and `cancelMeeting` change
-    a sent, non-recurring meeting from its invitation: Exchange updates or cancels the calendar
-    item, SMTP sends the request again with a higher `SEQUENCE` (and a CANCEL to removed
-    attendees) or an iMIP CANCEL. When only the attendees change, only added (or role-changed)
+    a sent, non-recurring meeting, given its invitation or any later update, as the meeting is
+    now: Exchange updates or cancels the calendar item and takes its current state from it; SMTP
+    continues from the newest version this app sent (`sent_meeting`, so an older invitation
+    undoes nothing, and canceled meetings are refused) and sends the request again with a higher
+    `SEQUENCE` (after a CANCEL to removed attendees; a failed update after it says so, and a
+    retry sends both) or an iMIP CANCEL. When only the attendees change, only added (or role-changed)
     and removed attendees hear of it (`meetingNotices` in `invitations.ts`): Exchange uses
     `SendToChangedAndSaveCopy` and takes the attendees from the calendar item, since such an
     update names only its recipients; SMTP keeps every attendee in the headers and limits the
     envelope (`sendDraft`'s `deliverTo`, which stores only a Sent copy when it is empty).
+    `sendDraft` marks the message a reply answers, found by its In-Reply-To when the reply comes
+    from a draft.
   - `body-text.ts`: bodies as plain text for AI clients (`ReadMessage.detail.text`) from the HTML
     when there is one: decoded entities, Markdown data tables, `[image: name]`, and the new text
     without quoted messages (`ReadMessage.newText`, by quote containers first, then text patterns;
@@ -120,7 +126,9 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
   message); `update_messages` looks up moved messages the same way before acting.
 - Mail is never stored in the database (`mcp_message_ref` holds identifiers only;
   `invitation_response` holds the user's answer per invitation UID and SEQUENCE, which reading
-  applies as `Invitation.ownStatus`, since the invitation's own calendar part never records it). Credentials are AES-GCM encrypted with `CREDENTIALS_KEY`
+  applies as `Invitation.ownStatus`, since the invitation's own calendar part never records it;
+  `sent_meeting` holds the UID, SEQUENCE, and Message-ID of the newest version of meetings changed
+  over SMTP). Credentials are AES-GCM encrypted with `CREDENTIALS_KEY`
   (`crypto.ts`, `credentials.ts`); never return `MailAccount.secret` to the browser (use
   `toSummary`).
 - Throw `MailError` for messages that are safe to show users and AI clients.
@@ -160,7 +168,8 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
     the short refs of messages in the changed subtree (`McpRefs.folderMoved`).
 - Tool results are compact JSON that leave out defaults: boolean flags only when true, `account`
   only when results span several accounts, `to` in lists only when it is not just the account.
-  A send whose draft could not be deleted afterwards reports `draft_kept`.
+  A send whose draft could not be deleted afterwards reports `draft_kept`. `get_thread` always
+  includes the given message and lists members it could not read with an `error`.
 - Attachment bytes never pass through tool calls. `get_attachment` returns readable content
   (`mail/attachment-text.ts`: text files, and documents as Markdown via `officeparser`) and a
   download link; `create_attachment_upload` returns an upload link, and sending tools take
@@ -188,7 +197,8 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
   `shortcut` for a keyboard key), not `title`. They still need an `sr-only` or `aria-label` name.
 - User actions show their result at once and finish in the background (`postAction` in
   `src/lib/form-action.ts`, resolving to `{ error, data }`); a failure undoes the change and shows
-  a toast. Message actions reach the server in the order they were made. A finished change stays
+  a toast. Message actions reach the server in the order they were made and live in
+  `src/lib/mail-actions.svelte.ts`, so they outlast a remount of the mail page. A finished change stays
   applied until data the server began loading after it finished arrives: actions return their
   server time `at`, the list `listedAt`, the counts `countedAt`. Flag changes reload nothing; the
   next scheduled refresh confirms them. Sending continues after the editor closes

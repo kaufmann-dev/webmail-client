@@ -427,6 +427,19 @@ export function calendarView(start: string, end: string): string {
 	);
 }
 
+/** PidLidCleanGlobalObjectId: a meeting's identity, the same in every copy of it. */
+const CLEAN_GLOBAL_OBJECT_ID =
+	'<t:ExtendedFieldURI DistinguishedPropertySetId="Meeting" PropertyId="35" PropertyType="Binary"/>';
+
+/** The calendar items of a meeting, by its global object ID (base64), whenever it takes place. */
+export function meetingItems(globalObjectId: string): string {
+	return (
+		'<m:FindItem Traversal="Shallow"><m:ItemShape><t:BaseShape>IdOnly</t:BaseShape></m:ItemShape>' +
+		`<m:Restriction>${compare('IsEqualTo', CLEAN_GLOBAL_OBJECT_ID, globalObjectId)}</m:Restriction>` +
+		'<m:ParentFolderIds><t:DistinguishedFolderId Id="calendar"/></m:ParentFolderIds></m:FindItem>'
+	);
+}
+
 /** A calendar item to change, with the change key Exchange's smart responses require. */
 export interface CalendarItemId {
 	id: string;

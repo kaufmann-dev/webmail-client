@@ -1069,12 +1069,27 @@ export async function conversationMembers(
  * The conversation around a message, oldest first. Exchange keeps its own conversation index;
  * Gmail threads come from X-GM-THRID in All Mail, addressed in Inbox or Sent where they are
  * there too (archiving and moving act on those copies); elsewhere, Inbox, Sent, and Archive are
- * searched for the Message-ID chain in both directions.
+ * searched for the Message-ID chain in both directions. The message itself is always included.
  */
 export async function getThread(
 	account: MailAccount,
 	messageLocator: MessageLocator,
-	detail: Pick<MessageDetail, 'messageId' | 'references' | 'inReplyTo'>
+	detail: MessageDetail
+): Promise<MessageSummary[]> {
+	const found = await threadMembers(account, messageLocator, detail);
+	// The folders searched may not hold the message itself (Trash or a custom folder, say).
+	const ref = encodeMessageRef(messageLocator);
+	const included = found.some(
+		(m) => m.ref === ref || (detail.messageId !== null && m.messageId === detail.messageId)
+	);
+	if (included) return found;
+	return [...found, detail].sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
+}
+
+async function threadMembers(
+	account: MailAccount,
+	messageLocator: MessageLocator,
+	detail: MessageDetail
 ): Promise<MessageSummary[]> {
 	if (account.provider === 'exchange') return ews.getThread(account, ewsLocator(messageLocator));
 	const locator = imapLocator(messageLocator);

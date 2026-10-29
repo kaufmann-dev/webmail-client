@@ -50,6 +50,13 @@
       "when": 1793289432554,
       "tag": "0006_yielding_orphan",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793295615870,
+      "tag": "0007_bumpy_viper",
+      "breakpoints": true
     }
   ]
 }

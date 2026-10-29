@@ -45,6 +45,7 @@
 		type MessageSummary
 	} from '#lib/mail-types.js';
 	import { keptMailboxes, refreshedMessages } from '#lib/list-refresh.js';
+	import { mailActions, type Change, type Flags } from '#lib/mail-actions.svelte.js';
 	import { canMoveTo, moveDestinations, type MoveDestination } from '#lib/move-targets.js';
 	import { leavingDrafts } from '#lib/outbox.js';
 	import { streamed } from '#lib/streamed.svelte.js';
@@ -163,25 +164,7 @@
 	let searchInput = $state<HTMLInputElement | null>(null);
 
 	type MailAction = 'flag' | 'move' | 'delete';
-	type Flags = Partial<Pick<MessageSummary, 'unread' | 'starred'>>;
 
-	interface Change {
-		refs: Set<string>;
-		/** The messages that leave the list. */
-		removed: Set<string>;
-		flags: Flags;
-		/** Inbox unread count changes by account. */
-		unread: Record<string, number>;
-		/** The server time it finished; null while it runs. */
-		done: number | null;
-	}
-
-	/**
-	 * Actions show at once and run in the background. A finished change stays applied until data
-	 * the server began loading after it finished arrives (`listedAt`, `countedAt`), so data already
-	 * on its way, however it was requested, cannot undo it.
-	 */
-	let changes = $state.raw<Change[]>([]);
 	// The open message's detail is not reloaded, so the changes it may predate stay applied until
 	// another message opens: those not yet settled when it opened, and those made while it is open.
 	let openChanges = $derived.by(() => {
@@ -248,7 +231,7 @@
 
 	/** Changes that data loaded from `since` on may not show yet. */
 	function unsettled(since: number) {
-		return changes.filter((c) => c.done === null || c.done >= since);
+		return mailActions.changes.filter((c) => c.done === null || c.done >= since);
 	}
 
 	function withFlags<T extends MessageSummary>(message: T, applied: Change[]): T {
@@ -350,9 +333,6 @@
 		}
 	}
 
-	// Actions reach the server in the order they were made, so the last one on a message wins.
-	let queue: Promise<unknown> = Promise.resolve();
-
 	/** Gmail archives outside Inbox, Spam, and Trash by removing the Inbox label: the message stays. */
 	function staysWhenArchived(message: MessageSummary): boolean {
 		return (
@@ -388,7 +368,10 @@
 		}
 		const change: Change = { refs: targets, removed, flags, unread: unreadDelta, done: null };
 		const oldest = Math.min(data.listedAt, data.countedAt);
-		changes = [...changes.filter((c) => c.done === null || c.done >= oldest), change];
+		mailActions.changes = [
+			...mailActions.changes.filter((c) => c.done === null || c.done >= oldest),
+			change
+		];
 		if (removed.size) picked = new Set([...picked].filter((ref) => !removed.has(ref)));
 		if (shownRef && targets.has(shownRef)) {
 			if (!removed.has(shownRef)) openChanges = [...openChanges, change];
@@ -401,18 +384,18 @@
 		if (staying.size) toast.success('Archived');
 
 		const url = `${basePath}?/${action}`;
-		const sent = queue.then(() => postAction(url, { ...fields, ref: refs }));
-		queue = sent;
+		const sent = mailActions.queue.then(() => postAction(url, { ...fields, ref: refs }));
+		mailActions.queue = sent;
 		const outcome = await sent;
 		if (outcome.error !== null) {
 			toast.error(outcome.error);
-			changes = changes.filter((c) => c !== change);
+			mailActions.changes = mailActions.changes.filter((c) => c !== change);
 			openChanges = openChanges.filter((c) => c !== change);
 			refresh('mail:list', 'mail:counts');
 			return;
 		}
 		change.done = Number(outcome.data.at);
-		changes = [...changes];
+		mailActions.changes = [...mailActions.changes];
 		// Flag changes show in the list and counts already; the next scheduled refresh confirms them.
 		if (removed.size) refresh('mail:list', 'mail:counts');
 		else if (action !== 'flag') refresh('mail:counts');

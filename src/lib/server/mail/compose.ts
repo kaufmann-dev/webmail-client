@@ -24,9 +24,10 @@ import {
 	type MeetingRequest
 } from './invitations';
 import { recordResponse } from './invitation-responses';
-import { encodeMessageRef } from './message-ref';
+import { decodeMessageRef, encodeMessageRef } from './message-ref';
 import {
 	deleteMessages,
+	findMessage,
 	forgetMessage,
 	getAttachments,
 	getMessage,
@@ -37,6 +38,7 @@ import {
 	type ReadMessage
 } from './messages';
 import { PROVIDER_CONFIG } from './providers';
+import { latestSentMeeting, recordSentMeeting } from './sent-meetings';
 import { createSmtpTransport } from './smtp';
 import {
 	composeBody,
@@ -318,7 +320,8 @@ export interface SendResult {
 
 /**
  * Sends over SMTP (or through Exchange), stores a Sent copy where the provider does not, removes
- * the draft it came from, and marks the answered message. Over SMTP, `deliverTo` limits delivery
+ * the draft it came from, and marks the answered message: `answersRef`, or else the message its
+ * In-Reply-To names (a reply sent from its draft). Over SMTP, `deliverTo` limits delivery
  * to some of the recipients while the message still names all of them; with none, the message is
  * only stored in Sent.
  */
@@ -394,8 +397,17 @@ export async function sendDraft(
 					() => true
 				)
 		: false;
-	if (options.answersRef) {
-		await groupRefs(userId, [options.answersRef])
+	// A reply sent from its draft no longer knows the ref it answers; its In-Reply-To finds it.
+	const { inReplyTo } = draft;
+	const answersRef =
+		options.answersRef ??
+		(inReplyTo
+			? await requireFolder(account, 'inbox')
+					.then((inbox) => findMessage(account, inReplyTo, inbox))
+					.catch(() => null)
+			: null);
+	if (answersRef) {
+		await groupRefs(userId, [answersRef])
 			.then(markAnswered)
 			.catch(() => undefined);
 	}
@@ -463,11 +475,32 @@ export async function respondToInvitation(
 
 type MeetingDraft = Draft & { meeting: Meeting };
 
-/** A meeting the user organizes and has sent, from its invitation (or an update of it). */
+/** The meeting draft an invitation the user sent describes. */
+function invitationDraft(account: MailAccount, read: ReadMessage, meeting: Meeting): MeetingDraft {
+	const { detail } = read;
+	return {
+		accountId: account.id,
+		to: detail.to,
+		cc: detail.cc,
+		bcc: [],
+		subject: detail.subject,
+		html: detail.html,
+		inReplyTo: null,
+		references: [],
+		attachments: [],
+		meeting
+	};
+}
+
+/**
+ * A meeting the user organizes and has sent, as it is now, from its invitation or any update of
+ * it: on Exchange from its calendar item (`item`), elsewhere from the newest version this app
+ * sent, which an older invitation must not undo.
+ */
 async function sentMeeting(
 	userId: string,
 	ref: string
-): Promise<{ account: MailAccount; current: MeetingDraft }> {
+): Promise<{ account: MailAccount; current: MeetingDraft; item: ews.OrganizedMeeting | null }> {
 	const { account, locator } = await resolveRef(userId, ref);
 	const read = await getMessage(account, locator);
 	const meeting = meetingOf(account, read);
@@ -480,22 +513,41 @@ async function sentMeeting(
 	if (locator.path === (await resolveFolder(account, 'drafts'))) {
 		throw new MailError('This meeting has not been sent yet; send its draft instead.', 400);
 	}
-	const { detail } = read;
-	return {
+	const sent = invitationDraft(account, read, meeting);
+	if (account.provider === 'exchange') {
+		const item = await ews.findOrganizedMeeting(account, meeting.uid, meeting.start, meeting.end);
+		const { start, end, location } = item;
+		return {
+			account,
+			item,
+			current: {
+				...sent,
+				to: item.required,
+				cc: item.optional,
+				subject: item.subject,
+				meeting: { ...meeting, start, end, location }
+			}
+		};
+	}
+	const latest = await latestSentMeeting(account.id, meeting.uid);
+	if (latest?.canceled && latest.sequence >= meeting.sequence) {
+		throw new MailError('This meeting was canceled.', 409);
+	}
+	if (!latest || latest.sequence <= meeting.sequence) return { account, item: null, current: sent };
+	const newerRef = await findMessage(
 		account,
-		current: {
-			accountId: account.id,
-			to: detail.to,
-			cc: detail.cc,
-			bcc: [],
-			subject: detail.subject,
-			html: detail.html,
-			inReplyTo: null,
-			references: [],
-			attachments: [],
-			meeting
-		}
-	};
+		latest.messageId,
+		await requireFolder(account, 'sent')
+	);
+	const newer = newerRef ? await getMessage(account, decodeMessageRef(newerRef)) : null;
+	const newerMeeting = newer ? meetingOf(account, newer) : null;
+	if (!newer || !newerMeeting) {
+		throw new MailError(
+			'A newer update of this meeting is no longer in Sent, so it cannot be changed.',
+			409
+		);
+	}
+	return { account, item: null, current: invitationDraft(account, newer, newerMeeting) };
 }
 
 const CANCELED_TEXT = 'This meeting has been canceled.';
@@ -534,7 +586,7 @@ export interface MeetingUpdate {
 }
 
 /**
- * Changes a meeting the user sent and tells the attendees at once. When only the attendees change,
+ * Changes a meeting the user sent, as it is now (see `sentMeeting`), and tells the attendees at once. When only the attendees change,
  * added attendees (and those whose role changed) get the invitation, removed ones a cancellation,
  * and the others nothing; any other change goes to all attendees. Exchange updates the calendar
  * item and notifies the attendees itself; other accounts send the invitation again with a higher
@@ -545,7 +597,7 @@ export async function updateMeeting(
 	ref: string,
 	changes: MeetingUpdate
 ): Promise<SendResult & Pick<Meeting, 'start' | 'end'>> {
-	const { account, current } = await sentMeeting(userId, ref);
+	const { account, current, item } = await sentMeeting(userId, ref);
 	const was = current.meeting;
 	const start = changes.start ?? was.start;
 	const end =
@@ -578,8 +630,8 @@ export async function updateMeeting(
 		throw new MailError('Nothing changes in this meeting.', 400);
 	}
 
-	if (account.provider === 'exchange') {
-		const attendees = await ews.updateMeeting(account, was, {
+	if (item) {
+		const attendees = await ews.updateMeeting(account, item, {
 			subject: subjectChanged ? updated.subject : undefined,
 			html:
 				changes.html === undefined
@@ -621,8 +673,24 @@ export async function updateMeeting(
 			)
 		);
 	}
-	// Sent last and naming every attendee, so the latest update in Sent describes the meeting.
-	const result = await sendDraft(userId, updated, { deliverTo: notices.request });
+	// Naming every attendee, so its copy in Sent describes the meeting. Only once it is out does it
+	// become the newest version, so after a failure, trying again sends the cancellations again.
+	const result = await sendDraft(userId, updated, { deliverTo: notices.request }).catch(
+		(error: unknown) => {
+			if (!notices.cancel.length) throw error;
+			throw new MailError(
+				`Removed attendees got the cancellation, but the update could not be sent (${errorMessage(error)}). Trying again sends both.`,
+				502
+			);
+		}
+	);
+	if (result.messageId) {
+		await recordSentMeeting(account.id, was.uid, {
+			sequence: updated.meeting.sequence,
+			messageId: result.messageId,
+			canceled: false
+		}).catch(() => undefined);
+	}
 	return { ...result, start, end };
 }
 
@@ -632,12 +700,12 @@ export async function cancelMeeting(
 	ref: string,
 	html: string | null
 ): Promise<SendResult> {
-	const { account, current } = await sentMeeting(userId, ref);
+	const { account, current, item } = await sentMeeting(userId, ref);
 	const body = html ?? textToComposeHtml(CANCELED_TEXT);
-	if (account.provider === 'exchange') {
+	if (item) {
 		await ews.cancelMeeting(
 			account,
-			current.meeting,
+			item,
 			outgoingHtml(withoutDataImages(body), toSummary(account).font)
 		);
 		return {
@@ -650,7 +718,15 @@ export async function cancelMeeting(
 		};
 	}
 	const meeting = { ...current.meeting, sequence: current.meeting.sequence + 1 };
-	return sendDraft(userId, cancellation(account, { ...current, meeting }, body));
+	const result = await sendDraft(userId, cancellation(account, { ...current, meeting }, body));
+	if (result.messageId) {
+		await recordSentMeeting(account.id, meeting.uid, {
+			sequence: meeting.sequence,
+			messageId: result.messageId,
+			canceled: true
+		}).catch(() => undefined);
+	}
+	return result;
 }
 
 /** Saves to the Drafts folder, replacing an earlier version; returns the new draft's ref and Message-ID. */

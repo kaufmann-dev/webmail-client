@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { MessageGoneError } from '../errors';
 import { decodeMessageRef } from '../message-ref';
 import { check, failed, operationResponse, responseMessages } from './client';
-import { availabilityOf, organizedMeetingOf } from './calendar';
+import { availabilityOf, globalObjectIdOf, organizedMeetingOf } from './calendar';
 import { buildFolders } from './folders';
 import {
 	attachmentIdOf,
@@ -393,7 +393,9 @@ describe('meetings', () => {
 					'<t:ItemId Id="OTHER" ChangeKey="K0"/><t:UID>abc</t:UID><t:IsOrganizer>false</t:IsOrganizer>' +
 					'<t:CalendarItemType>Single</t:CalendarItemType></t:CalendarItem></m:Items></m:GetItemResponseMessage>' +
 					'<m:GetItemResponseMessage ResponseClass="Success"><m:Items><t:CalendarItem>' +
-					'<t:ItemId Id="MINE" ChangeKey="K1"/><t:UID>ABC</t:UID><t:IsOrganizer>true</t:IsOrganizer>' +
+					'<t:ItemId Id="MINE" ChangeKey="K1"/><t:Subject>Planning</t:Subject>' +
+					'<t:Start>2026-11-09T09:00:00Z</t:Start><t:End>2026-11-09T10:00:00Z</t:End>' +
+					'<t:UID>ABC</t:UID><t:IsOrganizer>true</t:IsOrganizer>' +
 					'<t:CalendarItemType>Single</t:CalendarItemType><t:RequiredAttendees>' +
 					'<t:Attendee><t:Mailbox><t:Name>Alex</t:Name><t:EmailAddress>alex@example.com</t:EmailAddress></t:Mailbox></t:Attendee>' +
 					'<t:Attendee><t:Mailbox><t:EmailAddress>kim@example.com</t:EmailAddress></t:Mailbox></t:Attendee>' +
@@ -404,6 +406,10 @@ describe('meetings', () => {
 		expect(organizedMeetingOf(messages, 'abc')).toEqual({
 			id: 'MINE',
 			changeKey: 'K1',
+			subject: 'Planning',
+			start: '2026-11-09T09:00:00.000Z',
+			end: '2026-11-09T10:00:00.000Z',
+			location: null,
 			required: [
 				{ name: 'Alex', address: 'alex@example.com' },
 				{ name: '', address: 'kim@example.com' }
@@ -411,6 +417,20 @@ describe('meetings', () => {
 			optional: []
 		});
 		expect(organizedMeetingOf(messages, 'other')).toBeNull();
+	});
+
+	it('finds a meeting Exchange created by its global object ID, wherever it moved', () => {
+		const uid = '040000008200E00074C5B7101A82E00800000000ABCDEF';
+		const id = globalObjectIdOf(uid);
+		expect(id).toBe(Buffer.from(uid, 'hex').toString('base64'));
+		expect(globalObjectIdOf('abc@example.com')).toBeNull();
+		const body = request.meetingItems(id!);
+		expect(body).toContain(
+			'DistinguishedPropertySetId="Meeting" PropertyId="35" PropertyType="Binary"'
+		);
+		expect(body).toContain(`<t:Constant Value="${id}"/>`);
+		expect(body).toContain('<t:DistinguishedFolderId Id="calendar"/>');
+		expect(body).not.toContain('CalendarView');
 	});
 
 	it('updates only the changed fields and notifies the attendees', () => {

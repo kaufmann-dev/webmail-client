@@ -846,8 +846,9 @@ export function createMcpServer(
 		{
 			title: 'Get conversation',
 			description:
-				'Returns the whole conversation a message belongs to (received and sent, all folders), oldest first, ' +
-				'with its message_count; ' +
+				'Returns the whole conversation a message belongs to, oldest first, with its message_count: ' +
+				'received and sent, on Gmail and Exchange from every folder but Trash and Spam, elsewhere from ' +
+				'Inbox, Sent, and Archive; the given message is always included. ' +
 				"each message with its body. By default each body is only that message's new text, since the earlier " +
 				"messages are listed too. Messages outside the account's time window are left out; long conversations " +
 				'return the newest 30.',
@@ -865,8 +866,7 @@ export function createMcpServer(
 				const { account, locator, read } = await withMessage(message_ref, (ref) =>
 					access.requireMessage(ref, 'read')
 				);
-				const found = access.visible(await getThread(account, locator, read.detail));
-				const thread = found.length ? found : [read.detail];
+				const thread = access.visible(await getThread(account, locator, read.detail));
 				const shown = thread.slice(-MAX_THREAD_MESSAGES);
 				const reads = await Promise.allSettled(
 					shown.map((m) => getMessage(account, decodeMessageRef(m.ref)))
@@ -879,23 +879,34 @@ export function createMcpServer(
 					...(thread.length > shown.length && {
 						earlier_messages_omitted: thread.length - shown.length
 					}),
-					messages: shown.flatMap((m, index) => {
+					messages: shown.map((m, index) => {
 						const result = reads[index];
-						if (result.status === 'rejected') return [];
-						const { detail } = result.value;
-						return [
-							{
-								message_ref: short.get(m.ref)!,
-								folder: decodeMessageRef(m.ref).path,
-								from: addressText(detail.from),
-								...(detail.from && sameAddress(detail.from.address, own) && { from_me: true }),
-								to: detail.to.map(formatAddress),
-								...(detail.cc.length && { cc: detail.cc.map(formatAddress) }),
-								date: detail.date,
+						const listed = {
+							message_ref: short.get(m.ref)!,
+							folder: decodeMessageRef(m.ref).path
+						};
+						if (result.status === 'rejected') {
+							return {
+								...listed,
+								from: addressText(m.from),
+								...(m.from && sameAddress(m.from.address, own) && { from_me: true }),
+								to: m.to.map(formatAddress),
+								date: m.date,
 								...flagsOut(m),
-								...bodyOut(result.value, include_quoted, MAX_THREAD_BODY_CHARS)
-							}
-						];
+								error: `Could not be read: ${errorMessage(result.reason)}`
+							};
+						}
+						const { detail } = result.value;
+						return {
+							...listed,
+							from: addressText(detail.from),
+							...(detail.from && sameAddress(detail.from.address, own) && { from_me: true }),
+							to: detail.to.map(formatAddress),
+							...(detail.cc.length && { cc: detail.cc.map(formatAddress) }),
+							date: detail.date,
+							...flagsOut(m),
+							...bodyOut(result.value, include_quoted, MAX_THREAD_BODY_CHARS)
+						};
 					})
 				};
 			})
@@ -1248,7 +1259,8 @@ export function createMcpServer(
 	);
 
 	const sentInvitationRef = messageRef.describe(
-		'The invitation the user sent for the meeting (in Sent Items), or its latest update.'
+		'The invitation the user sent for the meeting (in Sent Items), or any later update; changes apply ' +
+			'to the meeting as it is now.'
 	);
 
 	server.registerTool(
@@ -1261,7 +1273,7 @@ export function createMcpServer(
 				'If only required and optional change, added attendees (and those moved between required and ' +
 				'optional) get the invitation, removed attendees a cancellation, and everyone else nothing. ' +
 				'Any other change sends the update to all attendees, and removed attendees get a ' +
-				'cancellation. Fields left out stay as they are; a new start without an end keeps the ' +
+				'cancellation. Fields left out keep their current values; a new start without an end keeps the ' +
 				"duration. Exchange accounts update the user's calendar; other accounts email the update.",
 			inputSchema: z.object({
 				message_ref: sentInvitationRef,
