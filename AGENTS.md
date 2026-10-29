@@ -53,8 +53,9 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
     cancellations, native meeting responses), and `calendar.ts` (free/busy through
     `GetUserAvailability`, which `ewsOperation` calls because it has no response messages and
     which needs a UTC zone with two distinct transitions; sent meetings found by UID in a calendar
-    view of their time). Lists page by position. Reading fetches the
-    calendar part of meeting messages and of messages carrying a calendar part (meeting drafts).
+    view of their time). Lists page by position and skip items Exchange is still sending (a sent
+    meeting's invitation passes through Drafts). Reading fetches the calendar part of meeting
+    messages and of messages carrying a calendar part (meeting drafts).
   - `messages.ts`: listing, search, reading, moving, and threads. The web list's first page uses
     `listMessagesInStages` (accounts still loading are left out of paging); MCP and "Load more"
     use `listMessages`, which waits for every account. Reading fetches only body text,

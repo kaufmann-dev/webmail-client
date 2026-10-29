@@ -16,6 +16,7 @@ import {
 	attachmentsOf,
 	dateOrNull,
 	firstItem,
+	inTransit,
 	isExchangeAddress,
 	itemId,
 	itemsOf,
@@ -93,7 +94,9 @@ export async function listPage(
 	const messages = await ewsCall(account, request.getItems(ids, fields));
 	const items = messages.flatMap((message, index) => {
 		const item = failed(message) ? null : firstItem(message);
-		return item ? [summaryOf(account.id, path, item.node, offset + index + 1)] : [];
+		return item && !inTransit(item.node)
+			? [summaryOf(account.id, path, item.node, offset + index + 1)]
+			: [];
 	});
 	await resolveAddresses(account, summaries(items));
 	return { accountId: account.id, items, exhausted };

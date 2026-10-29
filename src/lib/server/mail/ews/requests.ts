@@ -9,6 +9,7 @@ export const SUMMARY_FIELDS = [
 	'item:DateTimeReceived',
 	'item:HasAttachments',
 	'item:IsDraft',
+	'item:IsSubmitted',
 	'item:Flag',
 	'item:ParentFolderId',
 	'message:IsRead',

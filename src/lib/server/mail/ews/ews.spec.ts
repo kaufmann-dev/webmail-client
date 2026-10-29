@@ -4,7 +4,15 @@ import { decodeMessageRef } from '../message-ref';
 import { check, failed, operationResponse, responseMessages } from './client';
 import { availabilityOf, organizedMeetingOf } from './calendar';
 import { buildFolders } from './folders';
-import { attachmentIdOf, attachmentsOf, firstItem, itemsOf, partIdOf, summaryOf } from './items';
+import {
+	attachmentIdOf,
+	attachmentsOf,
+	firstItem,
+	inTransit,
+	itemsOf,
+	partIdOf,
+	summaryOf
+} from './items';
 import * as request from './requests';
 import { child, list } from './xml';
 
@@ -183,6 +191,13 @@ describe('items', () => {
 		const partId = partIdOf(attachments[0].id);
 		expect(partId).toMatch(/^[\w-]+$/);
 		expect(attachmentIdOf(partId)).toBe('att/1+');
+	});
+
+	it('recognizes items Exchange is still sending', () => {
+		expect(inTransit({ IsSubmitted: 'true', IsDraft: 'true' })).toBe(true);
+		expect(inTransit({ IsSubmitted: 'false', IsDraft: 'true' })).toBe(false);
+		expect(inTransit({ IsSubmitted: 'true', IsDraft: 'false' })).toBe(false);
+		expect(inTransit(node)).toBe(false);
 	});
 
 	it('collects items of every type', () => {

@@ -61,6 +61,11 @@ export function isExchangeAddress(address: string): boolean {
 	return address.startsWith('/');
 }
 
+/** An outgoing item Exchange has submitted but not sent yet, such as a meeting's invitation in Drafts. */
+export function inTransit(node: XmlNode): boolean {
+	return text(node.IsSubmitted) === 'true' && text(node.IsDraft) === 'true';
+}
+
 export function summaryOf(
 	accountId: string,
 	path: string,
