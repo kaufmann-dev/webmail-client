@@ -59,7 +59,9 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
     calendar view of their time for UIDs Exchange did not create). Lists page by received time (`timeCursors` in `items.ts`, so moving or
     flagging listed messages shifts no page; text searches page by position) and, like
     conversations, skip items Exchange is still sending (a sent meeting's invitation passes
-    through Drafts). Reading fetches the calendar part of meeting messages and of messages
+    through Drafts), for up to 15 minutes after they were submitted; later they show again, as
+    stuck, so they can be deleted. A submitted item is never a draft. Flag updates change the
+    items still there and then throw `MessageGoneError` for any that are gone. Reading fetches the calendar part of meeting messages and of messages
     carrying a calendar part (meeting drafts); a failed fetch fails the read rather than losing
     the meeting. X.500 sender addresses are resolved in small batches, and only answers are
     remembered.
@@ -120,10 +122,16 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
   over IMAP; account, folder path, and EWS item ID on Exchange. Resolve them with `resolveRef` /
   `groupRefs`, which scope accounts to the user; `imapLocator` / `ewsLocator` reject a ref of the
   wrong kind. MCP clients never see these refs: `mcp/refs.ts` maps them to 10-character refs in
-  `mcp_message_ref`. `moveMessages` returns the new refs of moved messages so short refs follow
-  them, and `withMessage` in `tools.ts` finds a message moved elsewhere by its Message-ID when an
+  `mcp_message_ref`. `moveMessages` finds every destination first and collects the new refs of
+  moved messages as it goes (in a map the caller passes), so short refs follow them even when a
+  later group fails, and `withMessage` in `tools.ts` finds a message moved elsewhere by its
+  Message-ID when an
   operation throws `MessageGoneError` (`errors.ts`, thrown wherever a ref no longer finds its
   message); `update_messages` looks up moved messages the same way before acting.
+  `findMessage` fails rather than report "not found" when a folder could not be searched. A ref
+  never takes over a message that has its own ref (`McpRefs.followed`), and refs of messages that
+  are gone lose their Message-ID (`McpRefs.gone`), so they fail at once instead of searching
+  every folder again. `loadDraft` (editing and `send_draft`) refuses messages that are not drafts.
 - Mail is never stored in the database (`mcp_message_ref` holds identifiers only;
   `invitation_response` holds the user's answer per invitation UID and SEQUENCE, which reading
   applies as `Invitation.ownStatus`, since the invitation's own calendar part never records it;

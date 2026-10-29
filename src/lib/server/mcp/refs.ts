@@ -19,8 +19,14 @@ export interface RefStore {
 	mint(userId: string, rows: Omit<RefRow, 'id'>[]): Promise<Map<string, string>>;
 	find(userId: string, ids: string[]): Promise<RefRow[]>;
 	forAccount(userId: string, accountId: string): Promise<RefRow[]>;
-	/** Points refs at the new locators of moved messages, by old locator. */
-	relocate(userId: string, moves: Map<string, string>): Promise<void>;
+	/**
+	 * Points refs at the new locators of moved messages, by old locator, and returns the old
+	 * locators moved. A ref already at a new locator gives way, unless `keep`: then that move is
+	 * skipped.
+	 */
+	relocate(userId: string, moves: Map<string, string>, keep?: boolean): Promise<Set<string>>;
+	/** Drops the Message-ID of refs, which stops lookups by it for messages that are gone. */
+	forgetMessageIds(userId: string, locators: string[]): Promise<void>;
 }
 
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -65,21 +71,38 @@ const dbStore: RefStore = {
 			.from(mcpMessageRef)
 			.where(and(eq(mcpMessageRef.userId, userId), eq(mcpMessageRef.accountId, accountId)));
 	},
-	async relocate(userId, moves) {
-		if (!moves.size) return;
-		await db.transaction(async (tx) => {
+	async relocate(userId, moves, keep = false) {
+		if (!moves.size) return new Set();
+		return db.transaction(async (tx) => {
 			const mine = eq(mcpMessageRef.userId, userId);
-			// A ref already minted for the new location gives way to the older one.
-			await tx
-				.delete(mcpMessageRef)
-				.where(and(mine, inArray(mcpMessageRef.locator, [...moves.values()])));
-			for (const [from, to] of moves) {
+			const destinations = inArray(mcpMessageRef.locator, [...moves.values()]);
+			let applied = moves;
+			if (keep) {
+				const rows = await tx
+					.select({ locator: mcpMessageRef.locator })
+					.from(mcpMessageRef)
+					.where(and(mine, destinations));
+				const taken = new Set(rows.map((row) => row.locator));
+				applied = new Map([...moves].filter(([, to]) => !taken.has(to)));
+			} else {
+				// A ref already minted for the new location gives way to the older one.
+				await tx.delete(mcpMessageRef).where(and(mine, destinations));
+			}
+			for (const [from, to] of applied) {
 				await tx
 					.update(mcpMessageRef)
 					.set({ locator: to })
 					.where(and(mine, eq(mcpMessageRef.locator, from)));
 			}
+			return new Set(applied.keys());
 		});
+	},
+	async forgetMessageIds(userId, locators) {
+		if (!locators.length) return;
+		await db
+			.update(mcpMessageRef)
+			.set({ messageId: null })
+			.where(and(eq(mcpMessageRef.userId, userId), inArray(mcpMessageRef.locator, locators)));
 	}
 };
 
@@ -126,8 +149,24 @@ export class McpRefs {
 		});
 	}
 
-	moved(moves: Map<string, string>): Promise<void> {
-		return this.store.relocate(this.userId, moves);
+	/** Refs follow messages these tools moved. */
+	async moved(moves: Map<string, string>): Promise<void> {
+		await this.store.relocate(this.userId, moves);
+	}
+
+	/**
+	 * Refs follow messages found again by their Message-ID after moving elsewhere, except onto a
+	 * message that has its own ref: to these tools that is another message (a copy, or the same
+	 * message listed again), and taking it over would silently invalidate that ref. Returns the old
+	 * locators that followed.
+	 */
+	followed(moves: Map<string, string>): Promise<Set<string>> {
+		return this.store.relocate(this.userId, moves, true);
+	}
+
+	/** Refs of messages that are gone fail at once from now on, without searching every folder. */
+	gone(locators: string[]): Promise<void> {
+		return this.store.forgetMessageIds(this.userId, locators);
 	}
 
 	/** Points the refs of messages in a renamed or moved folder and its subfolders at the new paths. */

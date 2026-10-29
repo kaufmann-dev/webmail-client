@@ -114,6 +114,10 @@ export async function findMeetingTimes(
 	if (options.durationMinutes < 5 || options.durationMinutes > 24 * 60) {
 		throw new MailError('Choose a duration between 5 minutes and 24 hours.', 400);
 	}
+	// Both are HH:MM, so they compare as text.
+	if (options.workday.start >= options.workday.end) {
+		throw new MailError('The workday must end after it starts.', 400);
+	}
 	const seen = new Set<string>();
 	const addresses = [account.email, ...options.attendees].filter((address) => {
 		const key = address.toLowerCase();

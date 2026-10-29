@@ -265,7 +265,8 @@ export function createMcpServer(
 
 	/**
 	 * Runs `fn` with the mail-layer ref of a short ref. A message that moved without these tools is
-	 * looked up again by its Message-ID, and the short ref follows it.
+	 * looked up again by its Message-ID, and the short ref follows it (`refs.followed`); one that is
+	 * gone is not looked up again.
 	 */
 	async function withMessage<T>(shortRef: string, fn: (ref: string) => Promise<T>): Promise<T> {
 		const row = await refs.resolve(shortRef);
@@ -275,9 +276,10 @@ export function createMcpServer(
 			const account = accountsById.get(row.accountId);
 			if (!(error instanceof MessageGoneError) || !account || !row.messageId) throw error;
 			const found = await findMessage(account, row.messageId, decodeMessageRef(row.locator).path);
-			if (!found || found === row.locator) throw error;
-			await refs.moved(new Map([[row.locator, found]]));
-			return fn(found);
+			if (found === row.locator) throw error;
+			if (found && (await refs.followed(new Map([[row.locator, found]]))).size) return fn(found);
+			await refs.gone([row.locator]);
+			throw error;
 		}
 	}
 
@@ -288,6 +290,7 @@ export function createMcpServer(
 	async function currentLocators(shortRefs: string[]): Promise<string[]> {
 		const rows = await refs.resolveAll(shortRefs);
 		const moves = new Map<string, string>();
+		const gone: string[] = [];
 		let missing = 0;
 		for (const account of accountsById.values()) {
 			const accountRows = rows.filter((row) => row.accountId === account.id);
@@ -301,10 +304,19 @@ export function createMcpServer(
 				const { path } = decodeMessageRef(row.locator);
 				const found = row.messageId ? await findMessage(account, row.messageId, path) : null;
 				if (found && found !== row.locator) moves.set(row.locator, found);
-				else missing++;
+				else {
+					missing++;
+					if (!found) gone.push(row.locator);
+				}
 			}
 		}
-		if (moves.size) await refs.moved(moves);
+		const followed = await refs.followed(moves);
+		for (const from of moves.keys()) {
+			if (followed.has(from)) continue;
+			missing++;
+			gone.push(from);
+		}
+		await refs.gone(gone);
 		if (missing) {
 			throw new MessageGoneError(
 				missing === 1
@@ -312,7 +324,7 @@ export function createMcpServer(
 					: `${missing} of these messages no longer exist.`
 			);
 		}
-		return rows.map((row) => moves.get(row.locator) ?? row.locator);
+		return rows.map((row) => (followed.has(row.locator) ? moves.get(row.locator)! : row.locator));
 	}
 
 	async function shortRefOf(ref: string, accountId: string, messageId: string | null) {

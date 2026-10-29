@@ -24,12 +24,21 @@ function memoryStore(): RefStore & { rows: (RefRow & { userId: string })[] } {
 		async forAccount(userId, accountId) {
 			return rows.filter((r) => r.userId === userId && r.accountId === accountId);
 		},
-		async relocate(userId, moves) {
+		async relocate(userId, moves, keep = false) {
+			const applied = new Set<string>();
 			for (const [from, to] of moves) {
 				const taken = rows.findIndex((r) => r.userId === userId && r.locator === to);
+				if (taken >= 0 && keep) continue;
 				if (taken >= 0) rows.splice(taken, 1);
 				const row = rows.find((r) => r.userId === userId && r.locator === from);
 				if (row) row.locator = to;
+				applied.add(from);
+			}
+			return applied;
+		},
+		async forgetMessageIds(userId, locators) {
+			for (const row of rows) {
+				if (row.userId === userId && locators.includes(row.locator)) row.messageId = null;
 			}
 		}
 	};
@@ -88,6 +97,33 @@ describe('McpRefs', () => {
 		).get(inboxRef(1))!;
 		await expect(new McpRefs('u2', store).resolve(id)).rejects.toThrow(InvalidMessageRefError);
 		await expect(new McpRefs('u1', store).resolveAll([id, 'nope'])).rejects.toThrow(/nope/);
+	});
+
+	it('follows a message found again only onto a message without a ref of its own', async () => {
+		const refs = new McpRefs('u1', memoryStore());
+		const ids = await refs.shorten([
+			{ ref: inboxRef(1), accountId: 'acc', messageId: '<1@x>' },
+			{ ref: inboxRef(2), accountId: 'acc', messageId: '<1@x>' }
+		]);
+		const followed = await refs.followed(
+			new Map([
+				[inboxRef(1), inboxRef(2)],
+				[inboxRef(3), inboxRef(4)]
+			])
+		);
+		expect(followed).toEqual(new Set([inboxRef(3)]));
+		// The copy keeps its own ref, and the ref of the message that is gone is left alone.
+		expect((await refs.resolve(ids.get(inboxRef(2))!)).locator).toBe(inboxRef(2));
+		expect((await refs.resolve(ids.get(inboxRef(1))!)).locator).toBe(inboxRef(1));
+	});
+
+	it('stops looking up gone messages by their Message-ID', async () => {
+		const refs = new McpRefs('u1', memoryStore());
+		const id = (
+			await refs.shorten([{ ref: inboxRef(1), accountId: 'acc', messageId: '<1@x>' }])
+		).get(inboxRef(1))!;
+		await refs.gone([inboxRef(1)]);
+		expect((await refs.resolve(id)).messageId).toBeNull();
 	});
 });
 

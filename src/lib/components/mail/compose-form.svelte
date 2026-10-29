@@ -93,9 +93,12 @@
 
 	// Going back is safe only to a page this document showed. Going back past the page load
 	// unloads the document, which cancels a send that is still uploading and drops its toast.
-	// Decided by the navigation that opened the editor, not by the URL update after saving.
+	// Decided by the navigation that opened the editor, not by the URL update after saving. Another
+	// editor (one a failed send's "Edit" replaced) is no place to go back to: it may be stale.
 	let openedInApp: boolean | null = null;
-	afterNavigate(({ from }) => (openedInApp ??= from !== null));
+	afterNavigate(
+		({ from }) => (openedInApp ??= from !== null && from.route.id !== '/(app)/compose')
+	);
 
 	function leave() {
 		dirty = false;
