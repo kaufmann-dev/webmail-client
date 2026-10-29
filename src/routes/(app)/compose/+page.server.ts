@@ -209,11 +209,11 @@ export const actions: Actions = {
 				locals.user.id,
 				await request.formData()
 			);
-			const { draftKept } = await sendDraft(locals.user.id, draft, {
+			const { draftKept, sentCopyMissing } = await sendDraft(locals.user.id, draft, {
 				replacesDraftRef,
 				answersRef
 			});
-			return { sent: true, draftKept };
+			return { sent: true, draftKept, sentCopyMissing };
 		}),
 	save: ({ request, locals }) =>
 		guard(async () => {
@@ -221,14 +221,14 @@ export const actions: Actions = {
 				locals.user.id,
 				await request.formData()
 			);
-			const { ref } = await saveDraft(locals.user.id, draft, replacesDraftRef);
+			const { ref, previousKept } = await saveDraft(locals.user.id, draft, replacesDraftRef);
 			// The saved draft now holds every attachment; later saves carry them from it. A meeting
 			// draft holds only its calendar file, which is rebuilt each time.
 			const saved = await resolveRef(locals.user.id, ref);
 			const carried: AttachmentInfo[] = draft.meeting
 				? []
 				: (await getMessage(saved.account, saved.locator)).detail.attachments;
-			return { saved: true, draftRef: ref, carried };
+			return { saved: true, draftRef: ref, carried, previousKept };
 		}),
 	discard: ({ request, locals }) =>
 		guard(async () => {

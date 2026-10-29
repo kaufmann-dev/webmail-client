@@ -382,12 +382,17 @@ export function createMcpServer(
 			in_reply_to: draft.inReplyTo
 		};
 		if (how === 'draft') {
-			const { ref, messageId } = await saveDraft(userId, draft, options.replacesDraftRef);
+			const { ref, messageId, previousKept } = await saveDraft(
+				userId,
+				draft,
+				options.replacesDraftRef
+			);
 			transfers.releaseUploads(options.uploadIds ?? []);
 			return {
 				status: 'draft_saved',
 				draft_ref: await shortRefOf(ref, draft.accountId, messageId),
-				...recipients
+				...recipients,
+				...(previousKept && { previous_draft_kept: true })
 			};
 		}
 		const result = await sendDraft(userId, draft, options);
@@ -396,7 +401,8 @@ export function createMcpServer(
 			status: 'sent',
 			message_id: result.messageId,
 			...recipients,
-			...(result.draftKept && { draft_kept: true })
+			...(result.draftKept && { draft_kept: true }),
+			...(result.sentCopyMissing && { sent_copy_missing: true })
 		};
 	}
 
@@ -1341,7 +1347,8 @@ export function createMcpServer(
 					end: formatWallClock(Date.parse(result.end), zone),
 					time_zone: zone,
 					to: result.to.map(formatAddress),
-					...(result.cc.length && { cc: result.cc.map(formatAddress) })
+					...(result.cc.length && { cc: result.cc.map(formatAddress) }),
+					...(result.sentCopyMissing && { sent_copy_missing: true })
 				};
 			})
 	);
@@ -1373,7 +1380,8 @@ export function createMcpServer(
 				return {
 					status: 'sent',
 					subject: result.subject,
-					to: [...result.to, ...result.cc].map(formatAddress)
+					to: [...result.to, ...result.cc].map(formatAddress),
+					...(result.sentCopyMissing && { sent_copy_missing: true })
 				};
 			})
 	);
@@ -1462,7 +1470,8 @@ export function createMcpServer(
 					status: 'sent',
 					response,
 					to: result.to.map(formatAddress),
-					subject: result.subject
+					subject: result.subject,
+					...(result.sentCopyMissing && { sent_copy_missing: true })
 				};
 			})
 	);

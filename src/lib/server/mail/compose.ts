@@ -318,6 +318,8 @@ export interface SendResult {
 	subject: string;
 	/** The message went out, but the draft it replaces could not be deleted. */
 	draftKept: boolean;
+	/** The message went out, but its copy could not be stored in Sent. */
+	sentCopyMissing: boolean;
 }
 
 /**
@@ -379,17 +381,18 @@ export async function sendDraft(
 
 	// The message is out; the follow-up bookkeeping must not report the send as failed. A message
 	// delivered to no one gets no Sent copy from the provider either.
+	let sentCopyMissing = false;
 	if (
 		account.provider !== 'exchange' &&
 		(PROVIDER_CONFIG[account.provider].appendToSent || !deliverTo.length)
 	) {
-		const sent = await resolveFolder(account, 'sent').catch(() => null);
-		if (sent) {
-			const copy = await buildRaw(account, draft, { messageId, date, keepBcc: true });
-			await withClient(account, (client) => client.append(sent, copy, ['\\Seen'], date)).catch(
-				() => undefined
+		const copy = await buildRaw(account, draft, { messageId, date, keepBcc: true });
+		sentCopyMissing = await requireFolder(account, 'sent')
+			.then((sent) => withClient(account, (client) => client.append(sent, copy, ['\\Seen'], date)))
+			.then(
+				(appended) => !appended,
+				() => true
 			);
-		}
 	}
 	const draftKept = options.replacesDraftRef
 		? await groupRefs(userId, [options.replacesDraftRef])
@@ -419,7 +422,8 @@ export async function sendDraft(
 		cc: draft.cc,
 		bcc: draft.bcc,
 		subject: draft.subject,
-		draftKept
+		draftKept,
+		sentCopyMissing
 	};
 }
 
@@ -449,7 +453,8 @@ export async function respondToInvitation(
 			cc: [],
 			bcc: [],
 			subject: reply.subject,
-			draftKept: false
+			draftKept: false,
+			sentCopyMissing: false
 		};
 	} else {
 		result = await sendDraft(
@@ -652,6 +657,7 @@ export async function updateMeeting(
 			bcc: [],
 			subject: updated.subject,
 			draftKept: false,
+			sentCopyMissing: false,
 			start,
 			end
 		};
@@ -716,7 +722,8 @@ export async function cancelMeeting(
 			cc: current.cc,
 			bcc: [],
 			subject: `Canceled: ${current.subject}`,
-			draftKept: false
+			draftKept: false,
+			sentCopyMissing: false
 		};
 	}
 	const meeting = { ...current.meeting, sequence: current.meeting.sequence + 1 };
@@ -731,12 +738,15 @@ export async function cancelMeeting(
 	return result;
 }
 
-/** Saves to the Drafts folder, replacing an earlier version; returns the new draft's ref and Message-ID. */
+/**
+ * Saves to the Drafts folder, replacing an earlier version. Returns the new draft's ref and
+ * Message-ID, and whether the earlier version could not be deleted (`previousKept`).
+ */
 export async function saveDraft(
 	userId: string,
 	input: Draft,
 	replacesRef?: string | null
-): Promise<{ ref: string; messageId: string }> {
+): Promise<{ ref: string; messageId: string; previousKept: boolean }> {
 	const account = await getAccount(userId, input.accountId);
 	const draft = withMeetingUid(account, input);
 	checkMeeting(draft, false);
@@ -752,12 +762,16 @@ export async function saveDraft(
 					itemId: await ews.saveDraft(account, raw)
 				})
 			: await appendDraft(account, path, raw, messageId);
-	if (replacesRef && replacesRef !== ref) {
-		await groupRefs(userId, [replacesRef])
+	const previousKept =
+		!!replacesRef &&
+		replacesRef !== ref &&
+		(await groupRefs(userId, [replacesRef])
 			.then(deleteMessages)
-			.catch(() => undefined);
-	}
-	return { ref, messageId };
+			.then(
+				() => false,
+				() => true
+			));
+	return { ref, messageId, previousKept };
 }
 
 async function appendDraft(

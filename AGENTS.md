@@ -63,7 +63,7 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
     stuck, so they can be deleted. A submitted item is never a draft. Flag updates change the
     items still there and then throw `MessageGoneError` for any that are gone. Reading fetches the calendar part of meeting messages and of messages
     carrying a calendar part (meeting drafts); a failed fetch fails the read rather than losing
-    the meeting. X.500 sender addresses are resolved in small batches, and only answers are
+    the meeting, as does a failed fetch of embedded images, which would otherwise show as files. X.500 sender addresses are resolved in small batches, and only answers are
     remembered.
   - `messages.ts`: listing, search, reading, moving, and threads. The web list's first page uses
     `listMessagesInStages` (accounts still loading are left out of paging); MCP and "Load more"
@@ -176,7 +176,9 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
     the short refs of messages in the changed subtree (`McpRefs.folderMoved`).
 - Tool results are compact JSON that leave out defaults: boolean flags only when true, `account`
   only when results span several accounts, `to` in lists only when it is not just the account.
-  A send whose draft could not be deleted afterwards reports `draft_kept`. `get_thread` always
+  A send whose draft could not be deleted afterwards reports `draft_kept`, one whose copy could
+  not be stored in Sent `sent_copy_missing`, and a saved draft whose earlier version could not be
+  deleted `previous_draft_kept`. `get_thread` always
   includes the given message and lists members it could not read with an `error`.
 - Attachment bytes never pass through tool calls. `get_attachment` returns readable content
   (`mail/attachment-text.ts`: text files, and documents as Markdown via `officeparser`) and a
@@ -212,7 +214,9 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
   next scheduled refresh confirms them. Sending continues after the editor closes
   (`src/lib/outbox.ts`), so closing it never leaves the page load: going back past it would unload
   the document and cancel the send. Drafts being sent or discarded leave lists at once
-  (`leavingDrafts`) and come back if that fails, or if the sent draft could not be deleted.
+  (`leavingDrafts`) and come back if that fails, or if the sent draft could not be deleted. A
+  send or save that leaves something behind (`SendResult.draftKept`, `sentCopyMissing`,
+  `saveDraft`'s `previousKept`) still succeeds and says so in its toast.
 - The open message streams from the page load, which must stay free of side effects because links
   preload on tap (not hover, which would queue reads ahead of the click) and the next message
   preloads after one opens. The page marks a message read once it is shown.

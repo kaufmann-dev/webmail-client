@@ -195,7 +195,11 @@
 				carried = result.data.carried as AttachmentInfo[];
 				files = [];
 				dirty = false;
-				toast.success('Draft saved');
+				toast.success(
+					result.data.previousKept
+						? 'Draft saved, but its earlier version could not be deleted.'
+						: 'Draft saved'
+				);
 				// The saved draft replaced the one in the URL; a reload opens the new one. Shallow, so
 				// the editor stays.
 				goto(`${resolve('/(app)/compose')}?${new URLSearchParams({ draft: draftRef })}`, {
@@ -241,7 +245,10 @@
 		});
 		return async ({ result }) =>
 			result.type === 'success'
-				? finish(null, result.data?.draftKept === true)
+				? finish(null, {
+						draftKept: result.data?.draftKept === true,
+						sentCopyMissing: result.data?.sentCopyMissing === true
+					})
 				: finish(failure(result));
 	};
 

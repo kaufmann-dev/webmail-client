@@ -179,10 +179,11 @@ async function embedImages(
 		budget -= a.size;
 		return true;
 	});
+	// A failure fails the read, which is then not cached, rather than turning images into files.
 	const nodes = await getAttachmentNodes(
 		account,
 		wanted.map((a) => a.id)
-	).catch(() => []);
+	);
 	nodes.forEach((node, index) => {
 		const attachment = wanted[index];
 		const content = attachmentContent(node).toString('base64');

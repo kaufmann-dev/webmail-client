@@ -24,24 +24,36 @@ function confirmUnload(event: BeforeUnloadEvent) {
 	event.preventDefault();
 }
 
+/** What a successful send left behind. */
+export interface SendLeftovers {
+	/** The draft the message came from is still there. */
+	draftKept?: boolean;
+	/** No copy could be stored in Sent. */
+	sentCopyMissing?: boolean;
+}
+
 /**
  * Follows a send that continues after the editor closed: shows its progress, asks before the tab
  * closes mid-send, and keeps a failed message so the error toast can reopen it. Call the returned
- * function with the outcome, and whether the draft the message came from is still there.
+ * function with the outcome, and what a successful send left behind.
  */
 export function followSend(
 	message: OutgoingMessage
-): (error: string | null, draftKept?: boolean) => void {
+): (error: string | null, leftovers?: SendLeftovers) => void {
 	const id = toast.loading('Sending…');
 	const draftRef = message.state.replacesDraftRef;
 	if (draftRef) leavingDrafts.add(draftRef);
 	if (sending++ === 0) window.addEventListener('beforeunload', confirmUnload);
-	return (error, draftKept = false) => {
+	return (error, { draftKept = false, sentCopyMissing = false } = {}) => {
 		if (--sending === 0) window.removeEventListener('beforeunload', confirmUnload);
 		if (!error) {
 			const sent = message.state.meeting ? 'Invitation sent' : 'Message sent';
 			if (draftKept && draftRef) leavingDrafts.delete(draftRef);
-			toast.success(draftKept ? `${sent}, but its draft could not be deleted.` : sent, { id });
+			const left = [
+				...(sentCopyMissing ? ['no copy could be saved in Sent'] : []),
+				...(draftKept ? ['its draft could not be deleted'] : [])
+			];
+			toast.success(left.length ? `${sent}, but ${left.join(', and ')}.` : sent, { id });
 			invalidate('mail:list');
 			return;
 		}
