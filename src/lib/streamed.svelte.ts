@@ -4,7 +4,16 @@ class Streamed<T> {
 	failed = $state(false);
 }
 
+const wrappers = new WeakMap<object, Streamed<unknown>>();
+
+/**
+ * One wrapper per load value, so it stays the same while the value does (a navigation that keeps
+ * the layout data keeps its wrappers).
+ */
 export function streamed<T>(value: T | Promise<T>): Streamed<T> {
+	const key = typeof value === 'object' && value !== null ? value : null;
+	const cached = key && wrappers.get(key);
+	if (cached) return cached as Streamed<T>;
 	const result = new Streamed<T>();
 	if (value instanceof Promise) {
 		value.then(
@@ -14,5 +23,6 @@ export function streamed<T>(value: T | Promise<T>): Streamed<T> {
 	} else {
 		result.current = value;
 	}
+	if (key) wrappers.set(key, result);
 	return result;
 }
