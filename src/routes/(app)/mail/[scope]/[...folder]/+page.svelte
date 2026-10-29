@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { afterNavigate, goto, invalidate, preloadData } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { navigating, page } from '$app/state';
@@ -44,11 +44,15 @@
 		type MessagePage,
 		type MessageSummary
 	} from '#lib/mail-types.js';
+	import { keptMailboxes, refreshedMessages } from '#lib/list-refresh.js';
 	import { canMoveTo, moveDestinations, type MoveDestination } from '#lib/move-targets.js';
 	import { leavingDrafts } from '#lib/outbox.js';
 	import { streamed } from '#lib/streamed.svelte.js';
+	import type { PageData } from './$types';
 
 	let { data } = $props();
+
+	type Mailboxes = Awaited<PageData['mailboxes']>;
 
 	// Held as stable references: opening a message replaces `data` but not these. The first page
 	// streams them in; accounts that answered late replace them once they arrive.
@@ -57,7 +61,19 @@
 	const list = $derived(lateListData.current ?? listData.current);
 	const mailboxesData = $derived(streamed(data.mailboxes));
 	const lateMailboxesData = $derived(streamed(data.lateMailboxes));
-	const mailboxes = $derived(lateMailboxesData.current ?? mailboxesData.current);
+	// What the sidebar showed last: new mailboxes that leave out a slow account keep its folders
+	// and count until it answers. Plain, so updating it triggers nothing.
+	let shownMailboxes: Mailboxes | null = null;
+	const mailboxes = $derived.by(() => {
+		const next = lateMailboxesData.current ?? mailboxesData.current;
+		if (!next) return null;
+		shownMailboxes = keptMailboxes(
+			next,
+			shownMailboxes,
+			data.accounts.map((a) => a.id)
+		);
+		return shownMailboxes;
+	});
 	const folders = $derived(mailboxes?.folders ?? {});
 	const serverUnread = $derived(mailboxes?.unread ?? {});
 	const opened = $derived(data.message);
@@ -93,12 +109,48 @@
 		return narrowedScope(data.scope, activeScope, data.accounts);
 	});
 	const shownAccount = (accountId: string) => !narrowedTo || narrowedTo.has(accountId);
+	// Folders still on their way: an account the first stage left out, until the late stage arrives.
+	const foldersLoading = $derived.by(() => {
+		const id = singleAccount(activeScope);
+		return !mailboxes || (id !== null && !(id in folders) && !lateMailboxesData.done);
+	});
 
-	// Reset whenever the server sends a fresh list; "Load more" appends locally.
-	let loaded = $derived(list?.messages ?? []);
-	let cursor = $derived(list?.nextCursor ?? null);
 	// The selection survives refreshes of the same list and resets in another folder, filter, or search.
 	const listKey = $derived(JSON.stringify([data.scope, data.folder, data.filter, data.query]));
+
+	// The list shown last (after changes), for new lists of the same view; see `refreshedMessages`.
+	// Plain, so updating them triggers nothing.
+	let shownKey = '';
+	let shownMessages: MessageSummary[] = [];
+	let shownCursor: string | null = null;
+	let shownWaiting: string[] = [];
+	/** "Load more" ran in this view; refreshes keep the pages it added. */
+	let extended = false;
+
+	interface ListView {
+		messages: MessageSummary[];
+		cursor: string | null;
+		/** Accounts still loading that have nothing on screen yet. */
+		waiting: string[];
+	}
+
+	// A new list from the server replaces the view; "Load more" appends locally. A new list of the
+	// same view (a refresh, or its late stage) keeps what accounts it still waits for showed and,
+	// after "Load more", the pages below its first one.
+	let listView = $derived.by((): ListView => {
+		if (!list) return { messages: [], cursor: null, waiting: [] };
+		if (listKey !== shownKey) {
+			return { messages: list.messages, cursor: list.nextCursor, waiting: list.pending };
+		}
+		const keepBelow = extended && list.nextCursor !== null;
+		return {
+			messages: refreshedMessages(list, shownMessages, extended),
+			cursor: keepBelow ? shownCursor : list.nextCursor,
+			waiting: list.pending.filter((id) => shownWaiting.includes(id))
+		};
+	});
+	const loaded = $derived(listView.messages);
+	const cursor = $derived(listView.cursor);
 	let picked = $derived.by(() => {
 		void listKey;
 		return new Set<string>();
@@ -115,38 +167,32 @@
 
 	interface Change {
 		refs: Set<string>;
-		remove: boolean;
+		/** The messages that leave the list. */
+		removed: Set<string>;
 		flags: Flags;
 		/** Inbox unread count changes by account. */
 		unread: Record<string, number>;
-		/** `refreshes` when the server finished it; null while it runs. */
+		/** The server time it finished; null while it runs. */
 		done: number | null;
 	}
 
 	/**
 	 * Actions show at once and run in the background. A finished change stays applied until data
-	 * requested after it finished arrives, so a refresh already on its way cannot undo it.
+	 * the server began loading after it finished arrives (`listedAt`, `countedAt`), so data already
+	 * on its way, however it was requested, cannot undo it.
 	 */
 	let changes = $state.raw<Change[]>([]);
-	const refreshes = { count: 0 };
-	// A late stage was requested with its early one, so only the early one counts as new data.
-	const listSerial = $derived.by(() => {
-		void listData.current;
-		return refreshes.count;
-	});
-	const countsSerial = $derived.by(() => {
-		void mailboxesData.current;
-		return refreshes.count;
-	});
-	const running = $derived(changes.filter((c) => c.done === null));
-	// The open message's detail is not reloaded, so its own changes stay until another opens.
+	// The open message's detail is not reloaded, so the changes it may predate stay applied until
+	// another message opens: those not yet settled when it opened, and those made while it is open.
 	let openChanges = $derived.by(() => {
 		void opened;
-		return [] as Change[];
+		return untrack(() => {
+			const ref = page.url.searchParams.get('m');
+			return ref ? unsettled(data.listedAt).filter((c) => c.refs.has(ref)) : [];
+		});
 	});
 
 	function refresh(...ids: string[]) {
-		refreshes.count++;
 		for (const id of ids) invalidate(id);
 	}
 
@@ -178,7 +224,7 @@
 	async function changeFolder(request: FolderRequest, value: string) {
 		folderRequest = null;
 		const path = request.kind === 'create' ? (request.parent?.path ?? '') : request.folder.path;
-		const error = await postAction(`${basePath}?/${FOLDER_ACTIONS[request.kind]}`, {
+		const { error } = await postAction(`${basePath}?/${FOLDER_ACTIONS[request.kind]}`, {
 			account: request.accountId,
 			path,
 			...(request.kind === 'move' ? { parent: value } : { name: value })
@@ -200,8 +246,9 @@
 		refresh('mail:counts');
 	}
 
-	function unsettled(serial: number) {
-		return changes.filter((c) => c.done === null || c.done >= serial);
+	/** Changes that data loaded from `since` on may not show yet. */
+	function unsettled(since: number) {
+		return changes.filter((c) => c.done === null || c.done >= since);
 	}
 
 	function withFlags<T extends MessageSummary>(message: T, applied: Change[]): T {
@@ -213,16 +260,22 @@
 	}
 
 	const messages = $derived.by(() => {
-		const applied = unsettled(listSerial);
-		const gone = new Set(applied.filter((c) => c.remove).flatMap((c) => [...c.refs]));
-		return loaded
+		const applied = unsettled(data.listedAt);
+		const gone = new Set(applied.flatMap((c) => [...c.removed]));
+		const shown = loaded
 			.filter((m) => !gone.has(m.ref) && !leavingDrafts.has(m.ref) && shownAccount(m.accountId))
 			.map((m) => withFlags(m, applied));
+		if (shownKey !== listKey) extended = false;
+		shownKey = listKey;
+		shownMessages = shown;
+		shownCursor = listView.cursor;
+		shownWaiting = listView.waiting;
+		return shown;
 	});
 
 	const unread = $derived.by(() => {
 		const counts = { ...serverUnread };
-		for (const change of unsettled(countsSerial)) {
+		for (const change of unsettled(data.countedAt)) {
 			for (const [id, delta] of Object.entries(change.unread)) {
 				const count = counts[id];
 				if (count != null) counts[id] = Math.max(0, count + delta);
@@ -236,13 +289,21 @@
 	let closing = $state<string | null>(null);
 	const shownRef = $derived(openRef === closing ? null : openRef);
 	const shownSummary = $derived(messages.find((m) => m.ref === shownRef));
+	// While narrowed accounts load, links already lead to the narrowed view, so following one does
+	// not cancel the narrowing.
 	const basePath = $derived(
-		resolve('/(app)/mail/[scope]/[...folder]', { scope: data.scope, folder: data.folder })
+		resolve('/(app)/mail/[scope]/[...folder]', {
+			scope: narrowedTo ? activeScope : data.scope,
+			folder: data.folder
+		})
+	);
+	const viewParams = $derived(
+		narrowedTo && target ? target.url.searchParams : page.url.searchParams
 	);
 
 	function urlWith(updates: Record<string, string | null>): string {
 		const entries = Object.entries({
-			...Object.fromEntries(page.url.searchParams),
+			...Object.fromEntries(viewParams),
 			...updates
 		}).filter((entry): entry is [string, string] => entry[1] !== null);
 		const query = new URLSearchParams(entries).toString();
@@ -273,10 +334,14 @@
 			const next: MessagePage = await response.json();
 			// A fresh list arrived meanwhile and starts over from the newest messages.
 			if (list !== base) return;
-			// Exchange pages by position, so mail that arrived meanwhile can repeat the last row.
+			// Exchange searches page by position, so mail that arrived meanwhile can repeat rows.
 			const shown = new Set(loaded.map((m) => m.ref));
-			loaded = [...loaded, ...next.messages.filter((m) => !shown.has(m.ref))];
-			cursor = next.nextCursor;
+			listView = {
+				...listView,
+				messages: [...loaded, ...next.messages.filter((m) => !shown.has(m.ref))],
+				cursor: next.nextCursor
+			};
+			extended = true;
 			for (const failure of next.errors) toast.error(failure.message);
 		} catch {
 			toast.error('Could not load more messages.');
@@ -285,48 +350,72 @@
 		}
 	}
 
+	// Actions reach the server in the order they were made, so the last one on a message wins.
+	let queue: Promise<unknown> = Promise.resolve();
+
+	/** Gmail archives outside Inbox, Spam, and Trash by removing the Inbox label: the message stays. */
+	function staysWhenArchived(message: MessageSummary): boolean {
+		return (
+			accountsById.get(message.accountId)?.provider === 'gmail' &&
+			role !== 'inbox' &&
+			role !== 'spam' &&
+			role !== 'trash'
+		);
+	}
+
 	/** Shows an action at once, runs it in the background, and undoes it if the server fails. */
 	async function act(action: MailAction, refs: string[], fields: Record<string, string> = {}) {
 		if (!refs.length) return;
 		const targets = new Set(refs);
-		const remove = action !== 'flag';
+		const listed = messages.filter((m) => targets.has(m.ref));
+		const staying = new Set(
+			action === 'move' && fields.target === 'archive'
+				? listed.filter(staysWhenArchived).map((m) => m.ref)
+				: []
+		);
+		const removed = new Set(action === 'flag' ? [] : refs.filter((ref) => !staying.has(ref)));
 		const flags: Flags = {};
 		if (fields.seen) flags.unread = fields.seen === 'false';
 		if (fields.flagged) flags.starred = fields.flagged === 'true';
 		const unreadDelta: Record<string, number> = {};
-		if (role === 'inbox') {
-			for (const message of messages) {
-				if (!targets.has(message.ref)) continue;
-				const after = !remove && (flags.unread ?? message.unread);
-				if (after === message.unread) continue;
-				unreadDelta[message.accountId] = (unreadDelta[message.accountId] ?? 0) + (after ? 1 : -1);
-			}
+		for (const message of listed) {
+			let delta = 0;
+			if (role === 'inbox') {
+				const after = !removed.has(message.ref) && (flags.unread ?? message.unread);
+				if (after !== message.unread) delta = after ? 1 : -1;
+			} else if (action === 'move' && fields.target === 'inbox' && message.unread) delta = 1;
+			if (delta) unreadDelta[message.accountId] = (unreadDelta[message.accountId] ?? 0) + delta;
 		}
-		const change: Change = { refs: targets, remove, flags, unread: unreadDelta, done: null };
-		const oldest = Math.min(listSerial, countsSerial);
+		const change: Change = { refs: targets, removed, flags, unread: unreadDelta, done: null };
+		const oldest = Math.min(data.listedAt, data.countedAt);
 		changes = [...changes.filter((c) => c.done === null || c.done >= oldest), change];
-		if (remove) picked = new Set([...picked].filter((ref) => !targets.has(ref)));
+		if (removed.size) picked = new Set([...picked].filter((ref) => !removed.has(ref)));
 		if (shownRef && targets.has(shownRef)) {
-			if (!remove) openChanges = [...openChanges, change];
+			if (!removed.has(shownRef)) openChanges = [...openChanges, change];
 			// Moving, deleting, or marking unread puts the open message away.
-			if (remove || flags.unread) {
+			if (removed.has(shownRef) || flags.unread) {
 				closing = shownRef;
 				goto(closeHref, { replace: true, reset: false });
 			}
 		}
+		if (staying.size) toast.success('Archived');
 
-		const error = await postAction(`${basePath}?/${action}`, { ...fields, ref: refs });
-		if (error) {
-			toast.error(error);
+		const url = `${basePath}?/${action}`;
+		const sent = queue.then(() => postAction(url, { ...fields, ref: refs }));
+		queue = sent;
+		const outcome = await sent;
+		if (outcome.error !== null) {
+			toast.error(outcome.error);
 			changes = changes.filter((c) => c !== change);
 			openChanges = openChanges.filter((c) => c !== change);
 			refresh('mail:list', 'mail:counts');
 			return;
 		}
-		change.done = refreshes.count;
+		change.done = Number(outcome.data.at);
 		changes = [...changes];
-		if (remove) refresh('mail:list', 'mail:counts');
-		else refresh('mail:counts');
+		// Flag changes show in the list and counts already; the next scheduled refresh confirms them.
+		if (removed.size) refresh('mail:list', 'mail:counts');
+		else if (action !== 'flag') refresh('mail:counts');
 	}
 
 	/** Opening a message marks it read, in the background like any other action. */
@@ -455,15 +544,24 @@
 	}
 
 	onMount(() => {
-		// New mail: refresh while the tab is visible, and when it regains focus.
+		// New mail: refresh while the tab is visible, and when it regains focus, but not when focus
+		// only comes back from the message frame.
 		const onRefresh = () => {
 			if (document.visibilityState === 'visible') refresh('mail:list', 'mail:counts');
 		};
+		let inFrame = false;
+		const onBlur = () => (inFrame = document.activeElement instanceof HTMLIFrameElement);
+		const onFocus = () => {
+			if (!inFrame) onRefresh();
+			inFrame = false;
+		};
 		const timer = setInterval(onRefresh, 60_000);
-		window.addEventListener('focus', onRefresh);
+		window.addEventListener('blur', onBlur);
+		window.addEventListener('focus', onFocus);
 		return () => {
 			clearInterval(timer);
-			window.removeEventListener('focus', onRefresh);
+			window.removeEventListener('blur', onBlur);
+			window.removeEventListener('focus', onFocus);
 		};
 	});
 
@@ -490,7 +588,7 @@
 	<MailSidebar
 		accounts={data.accounts}
 		{folders}
-		loading={!mailboxesData.current}
+		loading={foldersLoading}
 		{unread}
 		scope={activeScope}
 		folder={activeFolder}
@@ -513,7 +611,12 @@
 		{closeHref}
 		{hrefFor}
 		onaction={(action, fields) => act(action, [message.ref], fields)}
-		onrespond={(response) => postAction(`${basePath}?/respond`, { ref: message.ref, response })}
+		onrespond={async (response) => {
+			const { error } = await postAction(`${basePath}?/respond`, { ref: message.ref, response });
+			// Exchange usually moves an answered request to Deleted Items.
+			if (!error) refresh('mail:list', 'mail:counts');
+			return error;
+		}}
 		ondeleteforever={() => (confirmDelete = [message.ref])}
 	/>
 {/snippet}
@@ -699,7 +802,7 @@
 					{failure.message}
 				</p>
 			{/each}
-			{#each (list?.pending ?? []).filter(shownAccount) as accountId (accountId)}
+			{#each listView.waiting.filter(shownAccount) as accountId (accountId)}
 				<p class="border-b bg-muted px-3 py-2 text-sm wrap-anywhere" role="status">
 					Waiting for {accountsById.get(accountId)?.email ?? 'an account'}…
 				</p>
@@ -714,7 +817,7 @@
 				</div>
 			{:else if listData.failed}
 				<p class="p-6 text-sm">The messages could not be loaded.</p>
-			{:else if !list || (narrowedTo && !messages.length)}
+			{:else if !list || (!messages.length && (narrowedTo || listView.waiting.some(shownAccount)))}
 				<div class="flex p-6"><Spinner aria-label="Loading messages" class="m-auto" /></div>
 			{:else if !messages.length}
 				<p class="p-6 text-sm text-muted-foreground">
@@ -764,7 +867,7 @@
 			{:then result}
 				{#if result.detail}
 					{#key result.detail.ref}
-						{@render reader(withFlags(result.detail, [...running, ...openChanges]))}
+						{@render reader(withFlags(result.detail, openChanges))}
 					{/key}
 				{:else}
 					{@render unavailable(result.error)}

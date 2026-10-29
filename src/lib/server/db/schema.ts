@@ -10,13 +10,14 @@ import {
 	unique
 } from 'drizzle-orm/pg-core';
 import { oauthClient, user } from './auth-schema';
-import { ACCOUNT_COLORS, ACCESS_LEVELS, PROVIDERS } from '../../mail-types';
+import { ACCOUNT_COLORS, ACCESS_LEVELS, INVITATION_RESPONSES, PROVIDERS } from '../../mail-types';
 
 export * from './auth-schema';
 
 export const providerEnum = pgEnum('mail_provider', PROVIDERS);
 export const accountColorEnum = pgEnum('account_color', ACCOUNT_COLORS);
 export const accessLevelEnum = pgEnum('mcp_access_level', ACCESS_LEVELS);
+export const invitationResponseEnum = pgEnum('invitation_response_kind', INVITATION_RESPONSES);
 
 /** A connected mailbox. `secret` holds the encrypted password (IMAP/SMTP) or OAuth refresh token. */
 export const mailAccount = pgTable(
@@ -105,4 +106,23 @@ export const mcpMessageRef = pgTable(
 		createdAt: timestamp('created_at').defaultNow().notNull()
 	},
 	(table) => [unique('mcp_message_ref_locator_uq').on(table.userId, table.locator)]
+);
+
+/**
+ * The user's answers to invitations, by iCalendar UID: the invitation's own calendar part keeps
+ * asking for an answer. Holds identifiers and the answer only, never mail content.
+ */
+export const invitationResponse = pgTable(
+	'invitation_response',
+	{
+		accountId: text('account_id')
+			.notNull()
+			.references(() => mailAccount.id, { onDelete: 'cascade' }),
+		uid: text('uid').notNull(),
+		/** The SEQUENCE of the invitation answered; a later update from the organizer asks again. */
+		sequence: integer('sequence').notNull(),
+		response: invitationResponseEnum('response').notNull(),
+		respondedAt: timestamp('responded_at').defaultNow().notNull()
+	},
+	(table) => [primaryKey({ columns: [table.accountId, table.uid] })]
 );

@@ -1,7 +1,7 @@
 import { simpleParser } from 'mailparser';
 import type { Address, MessageDetail, MessageSummary } from '../../../mail-types';
 import { bodyText, previewOfCollapsed } from '../body-text';
-import { MailError } from '../errors';
+import { MailError, MessageGoneError } from '../errors';
 import { findCalendarPart, isCalendarPart, parseInvitation } from '../invitations';
 import type { AccountPage } from '../merge';
 import type { EwsLocator } from '../message-ref';
@@ -24,6 +24,8 @@ import {
 	MESSAGE_TYPES,
 	partIdOf,
 	summaryOf,
+	timeCursors,
+	timePosition,
 	type EwsAttachment
 } from './items';
 import * as request from './requests';
@@ -39,7 +41,13 @@ export function forgetResolvedAddresses(accountId: string): void {
 	resolvedAddresses.delete(accountId);
 }
 
-/** Replaces X.500 addresses (routing type EX) with SMTP addresses where Exchange resolves them. */
+/** Name resolutions per batch, so a page of internal senders does not get throttled. */
+const RESOLVE_BATCH = 5;
+
+/**
+ * Replaces X.500 addresses (routing type EX) with SMTP addresses where Exchange resolves them.
+ * Only answers are remembered; a failed lookup is tried again next time.
+ */
 async function resolveAddresses(
 	account: MailAccount,
 	addresses: (Address | null)[]
@@ -48,18 +56,23 @@ async function resolveAddresses(
 	resolvedAddresses.set(account.id, known);
 	const wanted = addresses.filter((a): a is Address => !!a && isExchangeAddress(a.address));
 	const pending = [...new Set(wanted.map((a) => a.address))].filter((dn) => !known.has(dn));
-	await Promise.all(
-		pending.map(async (dn) => {
-			try {
-				const [message] = await ewsCall(account, request.resolveName(dn));
-				const resolution = child(child(message, 'ResolutionSet'), 'Resolution');
-				const smtp = failed(message) ? '' : text(child(resolution, 'Mailbox')?.EmailAddress);
-				known.set(dn, smtp || null);
-			} catch {
-				known.set(dn, null);
-			}
-		})
-	);
+	for (let i = 0; i < pending.length; i += RESOLVE_BATCH) {
+		await Promise.all(
+			pending.slice(i, i + RESOLVE_BATCH).map(async (dn) => {
+				try {
+					const [message] = await ewsCall(account, request.resolveName(dn));
+					if (failed(message)) {
+						if (text(message.ResponseCode) === 'ErrorNameResolutionNoResults') known.set(dn, null);
+						return;
+					}
+					const resolution = child(child(message, 'ResolutionSet'), 'Resolution');
+					known.set(dn, text(child(resolution, 'Mailbox')?.EmailAddress) || null);
+				} catch {
+					// Not remembered: throttling and network errors pass.
+				}
+			})
+		);
+	}
 	for (const address of wanted) address.address = known.get(address.address) ?? address.address;
 }
 
@@ -67,7 +80,11 @@ function summaries(page: MessageSummary[]): (Address | null)[] {
 	return page.flatMap((s) => [s.from, ...s.to]);
 }
 
-/** One page of a folder, newest first; the cursor is the number of messages already listed. */
+/**
+ * One page of a folder, newest first. Pages run by received time (`timeCursors`), so moving or
+ * flagging listed messages shifts nothing; text searches, which take no time restriction, page by
+ * position (the number of messages already listed).
+ */
 export async function listPage(
 	account: MailAccount,
 	path: string,
@@ -76,30 +93,47 @@ export async function listPage(
 	limit: number,
 	options: { threads?: boolean } = {}
 ): Promise<AccountPage> {
-	const offset = cursor ?? 0;
+	const byTime = request.queryString(filters) === null;
+	const position = byTime && cursor !== undefined ? timePosition(cursor) : null;
+	const offset = position ? position.skip : (cursor ?? 0);
+	const pageFilters =
+		position && !(filters.before && filters.before <= position.before)
+			? { ...filters, before: position.before }
+			: filters;
 	const folder = await folderIdOf(account, path);
-	const [found] = await ewsCall(account, request.findItems(folder, filters, offset, limit));
+	const [found] = await ewsCall(account, request.findItems(folder, pageFilters, offset, limit));
 	const root = child(check(found), 'RootFolder');
 	// Items of different types arrive grouped by type, so the server's order is restored by date.
-	const ids = itemsOf(child(root, 'Items'))
+	const fetched = itemsOf(child(root, 'Items'))
 		.map(({ node }) => ({
 			id: itemId(node),
 			received: Date.parse(text(node.DateTimeReceived)) || 0
 		}))
-		.sort((a, b) => b.received - a.received)
-		.map((entry) => entry.id);
+		.sort((a, b) => b.received - a.received);
 	const exhausted = attr(root, 'IncludesLastItemInRange') !== 'false';
-	if (!ids.length) return { accountId: account.id, items: [], exhausted: true };
+	if (!fetched.length) return { accountId: account.id, items: [], exhausted: true, last: null };
+	const cursors = byTime
+		? timeCursors(
+				fetched.map((entry) => entry.received),
+				cursor
+			)
+		: fetched.map((_, index) => offset + index + 1);
 	const fields = options.threads ? request.THREAD_FIELDS : request.SUMMARY_FIELDS;
-	const messages = await ewsCall(account, request.getItems(ids, fields));
+	const messages = await ewsCall(
+		account,
+		request.getItems(
+			fetched.map((entry) => entry.id),
+			fields
+		)
+	);
 	const items = messages.flatMap((message, index) => {
 		const item = failed(message) ? null : firstItem(message);
 		return item && !inTransit(item.node)
-			? [summaryOf(account.id, path, item.node, offset + index + 1)]
+			? [summaryOf(account.id, path, item.node, cursors[index])]
 			: [];
 	});
 	await resolveAddresses(account, summaries(items));
-	return { accountId: account.id, items, exhausted };
+	return { accountId: account.id, items, exhausted, last: cursors[cursors.length - 1] };
 }
 
 interface AttachmentNode {
@@ -175,7 +209,7 @@ export async function readMessage(account: MailAccount, locator: EwsLocator): Pr
 		request.getItems([locator.itemId], request.DETAIL_FIELDS, { body: true })
 	);
 	const item = firstItem(check(message));
-	if (!item) throw new MailError('This message no longer exists.', 404);
+	if (!item) throw new MessageGoneError();
 	const { node } = item;
 	const summary = summaryOf(account.id, locator.path, node, 0);
 	const attachments = attachmentsOf(node);
@@ -198,7 +232,7 @@ export async function readMessage(account: MailAccount, locator: EwsLocator): Pr
 		// Meeting messages, and messages saved with a calendar part (the user's meeting drafts, which
 		// Exchange may keep as ordinary messages with the part as an attachment).
 		text(node.ItemClass).startsWith('IPM.Schedule.Meeting') || attachments.some(isCalendarPart)
-			? meetingCalendar(account, locator.itemId).catch(() => null)
+			? meetingCalendar(account, locator.itemId)
 			: null,
 		resolveAddresses(account, [summary.from, ...summary.to, ...cc, ...bcc, ...replyTo])
 	]);
@@ -308,6 +342,8 @@ export async function moveItems(
 ): Promise<(string | null)[]> {
 	const messages = await ewsCall(account, request.moveItems(ids, await folderIdOf(account, path)));
 	return messages.map((message) => {
+		// Gone already, like `deleteItems`; the others still move.
+		if (text(message.ResponseCode) === 'ErrorItemNotFound') return null;
 		const item = firstItem(check(message));
 		return item ? itemId(item.node) || null : null;
 	});
@@ -371,7 +407,7 @@ export async function conversations(
 			for (const node of nodes) {
 				for (const { node: item } of itemsOf(child(node, 'Items'))) {
 					const path = pathById.get(attr(child(item, 'ParentFolderId'), 'Id'));
-					if (path) found.push(summaryOf(account.id, path, item, 0));
+					if (path && !inTransit(item)) found.push(summaryOf(account.id, path, item, 0));
 				}
 			}
 		}

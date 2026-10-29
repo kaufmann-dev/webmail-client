@@ -27,17 +27,21 @@ function confirmUnload(event: BeforeUnloadEvent) {
 /**
  * Follows a send that continues after the editor closed: shows its progress, asks before the tab
  * closes mid-send, and keeps a failed message so the error toast can reopen it. Call the returned
- * function with the outcome.
+ * function with the outcome, and whether the draft the message came from is still there.
  */
-export function followSend(message: OutgoingMessage): (error: string | null) => void {
+export function followSend(
+	message: OutgoingMessage
+): (error: string | null, draftKept?: boolean) => void {
 	const id = toast.loading('Sending…');
 	const draftRef = message.state.replacesDraftRef;
 	if (draftRef) leavingDrafts.add(draftRef);
 	if (sending++ === 0) window.addEventListener('beforeunload', confirmUnload);
-	return (error) => {
+	return (error, draftKept = false) => {
 		if (--sending === 0) window.removeEventListener('beforeunload', confirmUnload);
 		if (!error) {
-			toast.success(message.state.meeting ? 'Invitation sent' : 'Message sent', { id });
+			const sent = message.state.meeting ? 'Invitation sent' : 'Message sent';
+			if (draftKept && draftRef) leavingDrafts.delete(draftRef);
+			toast.success(draftKept ? `${sent}, but its draft could not be deleted.` : sent, { id });
 			invalidate('mail:list');
 			return;
 		}

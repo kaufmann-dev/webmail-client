@@ -2,7 +2,8 @@ import type { MessageSummary } from '../../mail-types';
 
 /**
  * Per-account paging state for merged lists, or 0 when the account has nothing more: over IMAP the
- * UID below which the next page starts, on Exchange the number of messages already listed.
+ * UID below which the next page starts, on Exchange the received time of the last listed message
+ * (`timeCursors` in `ews/items.ts`; the number of messages already listed in text searches).
  * Accounts missing from the map start at the newest message. See `MessageSummary.cursor`.
  */
 export type ListCursor = Record<string, number>;
@@ -13,6 +14,11 @@ export interface AccountPage {
 	items: MessageSummary[];
 	/** True when no messages exist below the last item. */
 	exhausted: boolean;
+	/**
+	 * The cursor of the last message the server returned, listed or left out (an Exchange message
+	 * still being sent, one outside a time window); null when it returned none.
+	 */
+	last: number | null;
 }
 
 export function encodeCursor(cursor: ListCursor): string {
@@ -60,17 +66,23 @@ export function mergePages(
 	for (const [i, page] of pages.entries()) {
 		const consumed = positions[i];
 		if (consumed === page.items.length && page.exhausted) cursor[page.accountId] = 0;
-		else if (consumed > 0) cursor[page.accountId] = page.items[consumed - 1].cursor;
+		// Every listed message was used: continue past the left-out ones too, or a page of only
+		// left-out messages would come back forever.
+		else if (consumed === page.items.length && page.last !== null) {
+			cursor[page.accountId] = page.last;
+		} else if (consumed > 0) cursor[page.accountId] = page.items[consumed - 1].cursor;
 	}
 	const more = pages.some((page) => cursor[page.accountId] !== 0);
 	return { messages, cursor: more ? cursor : null };
 }
 
 /**
- * Drops messages received before `notBefore`. Pages run from the newest message down, so once one
- * is dropped nothing newer follows and the account is done.
+ * Drops messages received before `notBefore`. When pages run by received time (`ordered`, as on
+ * Exchange), nothing newer follows a dropped message and the account is done; IMAP pages run by
+ * UID, where a message moved in from elsewhere keeps its older date.
  */
-export function trimPage(page: AccountPage, notBefore: Date): AccountPage {
+export function trimPage(page: AccountPage, notBefore: Date, ordered: boolean): AccountPage {
 	const items = page.items.filter((m) => Date.parse(m.date) >= notBefore.getTime());
-	return items.length === page.items.length ? page : { ...page, items, exhausted: true };
+	if (items.length === page.items.length) return page;
+	return { ...page, items, exhausted: page.exhausted || ordered };
 }

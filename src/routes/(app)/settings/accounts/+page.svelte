@@ -51,7 +51,7 @@
 		localOrder = order;
 		queuedMoves++;
 		moves = moves.then(async () => {
-			const error = await postAction(actionUrl('move'), { id, direction });
+			const { error } = await postAction(actionUrl('move'), { id, direction });
 			if (error) toast.error(error);
 			if (--queuedMoves > 0 && !error) return;
 			await invalidateAll();
@@ -61,7 +61,7 @@
 
 	async function removeAccount(id: string) {
 		removed.add(id);
-		const error = await postAction(actionUrl('delete'), { id });
+		const { error } = await postAction(actionUrl('delete'), { id });
 		if (error) {
 			removed.delete(id);
 			toast.error(error);

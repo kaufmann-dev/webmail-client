@@ -13,6 +13,7 @@ export interface EwsItem {
 /** Item types that carry `IsRead` (all derive from EWS `MessageType`). */
 export const MESSAGE_TYPES = new Set([
 	'Message',
+	'MeetingMessage',
 	'MeetingRequest',
 	'MeetingResponse',
 	'MeetingCancellation'
@@ -64,6 +65,29 @@ export function isExchangeAddress(address: string): boolean {
 /** An outgoing item Exchange has submitted but not sent yet, such as a meeting's invitation in Drafts. */
 export function inTransit(node: XmlNode): boolean {
 	return text(node.IsSubmitted) === 'true' && text(node.IsDraft) === 'true';
+}
+
+/**
+ * Exchange lists page by received time: a message's cursor is `second * TIES + n`, the nth message
+ * listed in that second of its `DateTimeReceived`, so the next page skips the ties already listed.
+ */
+const TIES = 1_000_000;
+
+/** Where the page after `cursor` starts: messages received before the end of its second, past its ties. */
+export function timePosition(cursor: number): { before: Date; skip: number } {
+	return { before: new Date((Math.floor(cursor / TIES) + 1) * 1000), skip: cursor % TIES };
+}
+
+/** The cursors of messages received at these times (ms, newest first) on the page after `cursor`. */
+export function timeCursors(received: number[], cursor: number | undefined): number[] {
+	let second = cursor === undefined ? null : Math.floor(cursor / TIES);
+	let n = cursor === undefined ? 0 : cursor % TIES;
+	return received.map((time) => {
+		const current = Math.floor(time / 1000);
+		n = current === second ? n + 1 : 1;
+		second = current;
+		return current * TIES + n;
+	});
 }
 
 export function summaryOf(

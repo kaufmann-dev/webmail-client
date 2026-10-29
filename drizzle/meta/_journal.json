@@ -43,6 +43,13 @@
       "when": 1791814005309,
       "tag": "0005_simple_piledriver",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793289432554,
+      "tag": "0006_yielding_orphan",
+      "breakpoints": true
     }
   ]
 }

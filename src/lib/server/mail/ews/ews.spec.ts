@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MailError } from '../errors';
+import { MessageGoneError } from '../errors';
 import { decodeMessageRef } from '../message-ref';
 import { check, failed, operationResponse, responseMessages } from './client';
 import { availabilityOf, organizedMeetingOf } from './calendar';
@@ -11,7 +11,9 @@ import {
 	inTransit,
 	itemsOf,
 	partIdOf,
-	summaryOf
+	summaryOf,
+	timeCursors,
+	timePosition
 } from './items';
 import * as request from './requests';
 import { child, list } from './xml';
@@ -40,7 +42,7 @@ describe('responseMessages', () => {
 		expect(messages).toHaveLength(2);
 		expect(failed(messages[0])).toBe(false);
 		expect(firstItem(messages[0])?.type).toBe('Message');
-		expect(() => check(messages[1])).toThrow(new MailError('This message no longer exists.', 404));
+		expect(() => check(messages[1])).toThrow(new MessageGoneError());
 	});
 
 	it('reports SOAP faults', () => {
@@ -198,6 +200,25 @@ describe('items', () => {
 		expect(inTransit({ IsSubmitted: 'false', IsDraft: 'true' })).toBe(false);
 		expect(inTransit({ IsSubmitted: 'true', IsDraft: 'false' })).toBe(false);
 		expect(inTransit(node)).toBe(false);
+	});
+
+	it('pages by received time, counting messages that share a second', () => {
+		const at = (iso: string) => Date.parse(iso);
+		const second = at('2026-10-29T15:00:00Z') / 1000;
+		const cursors = timeCursors(
+			[at('2026-10-29T15:00:00.900Z'), at('2026-10-29T15:00:00Z'), at('2026-10-29T14:59:59Z')],
+			undefined
+		);
+		expect(cursors).toEqual([
+			second * 1_000_000 + 1,
+			second * 1_000_000 + 2,
+			(second - 1) * 1_000_000 + 1
+		]);
+		// The next page ends with that second and skips the one tie listed already.
+		const next = timePosition(cursors[1] - 1);
+		expect(next).toEqual({ before: new Date((second + 1) * 1000), skip: 1 });
+		// Its messages in the same second continue the count.
+		expect(timeCursors([at('2026-10-29T15:00:00Z')], cursors[1] - 1)).toEqual([cursors[1]]);
 	});
 
 	it('collects items of every type', () => {

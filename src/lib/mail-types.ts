@@ -48,6 +48,12 @@ export function isMaxAgeDays(value: number): value is MaxAgeDays {
 	return (MAX_AGE_DAYS as readonly number[]).includes(value);
 }
 
+/** A stored time window; a value this version does not offer becomes the narrowest one. */
+export function storedMaxAgeDays(value: number | null): MaxAgeDays | null {
+	if (value === null) return null;
+	return isMaxAgeDays(value) ? value : MAX_AGE_DAYS[0];
+}
+
 /** One MCP client's access to one mail account. */
 export interface AccountGrant {
 	level: AccessLevel;
@@ -99,8 +105,9 @@ export interface MessageSummary {
 	ref: string;
 	accountId: string;
 	/**
-	 * The account's list cursor after this message: its UID over IMAP, or its 1-based position in
-	 * the folder on Exchange.
+	 * The account's list cursor after this message: its UID over IMAP; on Exchange its received
+	 * second and place among that second's messages (`timeCursors`), or its 1-based position in
+	 * text searches.
 	 */
 	cursor: number;
 	from: Address | null;

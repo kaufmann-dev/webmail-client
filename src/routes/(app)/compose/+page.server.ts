@@ -94,7 +94,8 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 			};
 		} else if (draft) {
 			const { account, locator } = await resolveRef(userId, draft);
-			const read = await getMessage(account, locator);
+			// Fresh: Exchange keeps a draft's item ID when another program edits it.
+			const read = await getMessage(account, locator, { fresh: true });
 			const { detail } = read;
 			const meeting = meetingOf(account, read);
 			state = {
@@ -208,8 +209,11 @@ export const actions: Actions = {
 				locals.user.id,
 				await request.formData()
 			);
-			await sendDraft(locals.user.id, draft, { replacesDraftRef, answersRef });
-			return { sent: true };
+			const { draftKept } = await sendDraft(locals.user.id, draft, {
+				replacesDraftRef,
+				answersRef
+			});
+			return { sent: true, draftKept };
 		}),
 	save: ({ request, locals }) =>
 		guard(async () => {
@@ -217,7 +221,7 @@ export const actions: Actions = {
 				locals.user.id,
 				await request.formData()
 			);
-			const ref = await saveDraft(locals.user.id, draft, replacesDraftRef);
+			const { ref } = await saveDraft(locals.user.id, draft, replacesDraftRef);
 			// The saved draft now holds every attachment; later saves carry them from it. A meeting
 			// draft holds only its calendar file, which is rebuilt each time.
 			const saved = await resolveRef(locals.user.id, ref);

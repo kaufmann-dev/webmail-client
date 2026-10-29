@@ -23,14 +23,17 @@ import {
 	parseInvitation,
 	type MeetingRequest
 } from './invitations';
+import { recordResponse } from './invitation-responses';
 import { encodeMessageRef } from './message-ref';
 import {
 	deleteMessages,
+	forgetMessage,
 	getAttachments,
 	getMessage,
 	groupRefs,
 	markAnswered,
 	resolveRef,
+	searchUids,
 	type ReadMessage
 } from './messages';
 import { PROVIDER_CONFIG } from './providers';
@@ -171,7 +174,8 @@ export async function prepareForward(
 /** A saved draft, back as editable fields; its threading headers are kept. */
 export async function loadDraft(userId: string, ref: string): Promise<Draft> {
 	const { account, locator } = await resolveRef(userId, ref);
-	const read = await getMessage(account, locator);
+	// Fresh: Exchange keeps a draft's item ID when another program edits it.
+	const read = await getMessage(account, locator, { fresh: true });
 	const { detail } = read;
 	const meeting = meetingOf(account, read);
 	if (meeting) {
@@ -308,6 +312,8 @@ export interface SendResult {
 	cc: Address[];
 	bcc: Address[];
 	subject: string;
+	/** The message went out, but the draft it replaces could not be deleted. */
+	draftKept: boolean;
 }
 
 /**
@@ -380,11 +386,14 @@ export async function sendDraft(
 			);
 		}
 	}
-	if (options.replacesDraftRef) {
-		await groupRefs(userId, [options.replacesDraftRef])
-			.then(deleteMessages)
-			.catch(() => undefined);
-	}
+	const draftKept = options.replacesDraftRef
+		? await groupRefs(userId, [options.replacesDraftRef])
+				.then(deleteMessages)
+				.then(
+					() => false,
+					() => true
+				)
+		: false;
 	if (options.answersRef) {
 		await groupRefs(userId, [options.answersRef])
 			.then(markAnswered)
@@ -395,50 +404,61 @@ export async function sendDraft(
 		to: draft.to,
 		cc: draft.cc,
 		bcc: draft.bcc,
-		subject: draft.subject
+		subject: draft.subject,
+		draftKept
 	};
 }
 
-/** Answers an invitation: sends the iMIP reply to its organizer and marks the invitation answered. */
+/**
+ * Answers an invitation: sends the iMIP reply to its organizer, marks the invitation answered,
+ * and records the answer, which the invitation's own calendar part never shows.
+ */
 export async function respondToInvitation(
 	userId: string,
 	ref: string,
 	response: InvitationResponse
 ): Promise<SendResult> {
 	const { account, locator } = await resolveRef(userId, ref);
-	const { calendar } = await getMessage(account, locator);
+	const { calendar, detail } = await getMessage(account, locator);
 	if (!calendar) throw new MailError('This message has no invitation.', 400);
 	const reply = invitationReply(
 		calendar,
 		{ name: account.displayName, address: account.email },
 		response
 	);
+	let result: SendResult;
 	// Exchange answers its own meeting requests, which also keeps its calendar current.
 	if (locator.kind === 'ews' && (await ews.respondToMeeting(account, locator.itemId, response))) {
-		return {
+		result = {
 			messageId: null,
 			to: [reply.organizer],
 			cc: [],
 			bcc: [],
-			subject: reply.subject
-		};
-	}
-	return sendDraft(
-		userId,
-		{
-			accountId: account.id,
-			to: [reply.organizer],
-			cc: [],
-			bcc: [],
 			subject: reply.subject,
-			html: textToComposeHtml(reply.text),
-			inReplyTo: null,
-			references: [],
-			attachments: [],
-			calendar: { method: 'REPLY', content: reply.ics }
-		},
-		{ answersRef: ref }
-	);
+			draftKept: false
+		};
+	} else {
+		result = await sendDraft(
+			userId,
+			{
+				accountId: account.id,
+				to: [reply.organizer],
+				cc: [],
+				bcc: [],
+				subject: reply.subject,
+				html: textToComposeHtml(reply.text),
+				inReplyTo: null,
+				references: [],
+				attachments: [],
+				calendar: { method: 'REPLY', content: reply.ics }
+			},
+			{ answersRef: ref }
+		);
+	}
+	const uid = detail.invitation?.uid;
+	if (uid) await recordResponse(account.id, uid, detail.invitation?.sequence ?? 0, response);
+	forgetMessage(ref);
+	return result;
 }
 
 type MeetingDraft = Draft & { meeting: Meeting };
@@ -577,6 +597,7 @@ export async function updateMeeting(
 			cc: attendees.optional,
 			bcc: [],
 			subject: updated.subject,
+			draftKept: false,
 			start,
 			end
 		};
@@ -624,19 +645,20 @@ export async function cancelMeeting(
 			to: current.to,
 			cc: current.cc,
 			bcc: [],
-			subject: `Canceled: ${current.subject}`
+			subject: `Canceled: ${current.subject}`,
+			draftKept: false
 		};
 	}
 	const meeting = { ...current.meeting, sequence: current.meeting.sequence + 1 };
 	return sendDraft(userId, cancellation(account, { ...current, meeting }, body));
 }
 
-/** Saves to the Drafts folder, replacing an earlier version; returns the new draft's ref. */
+/** Saves to the Drafts folder, replacing an earlier version; returns the new draft's ref and Message-ID. */
 export async function saveDraft(
 	userId: string,
 	input: Draft,
 	replacesRef?: string | null
-): Promise<string> {
+): Promise<{ ref: string; messageId: string }> {
 	const account = await getAccount(userId, input.accountId);
 	const draft = withMeetingUid(account, input);
 	checkMeeting(draft, false);
@@ -657,7 +679,7 @@ export async function saveDraft(
 			.then(deleteMessages)
 			.catch(() => undefined);
 	}
-	return ref;
+	return { ref, messageId };
 }
 
 async function appendDraft(
@@ -680,8 +702,7 @@ async function appendDraft(
 	}
 	// Servers without UIDPLUS do not report the new UID; find the draft by its Message-ID.
 	return withMailbox(account, path, async (client, mailbox) => {
-		const uids =
-			(await client.search({ header: { 'message-id': messageId } }, { uid: true })) || [];
+		const uids = await searchUids(client, account, { header: { 'message-id': messageId } });
 		if (!uids.length) throw new MailError('The draft was saved but could not be located.', 502);
 		return encodeMessageRef({
 			kind: 'imap',

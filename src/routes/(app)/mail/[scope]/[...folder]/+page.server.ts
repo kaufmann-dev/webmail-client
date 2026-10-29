@@ -47,10 +47,11 @@ async function refsFrom(request: Request) {
 	return { form, refs: refsSchema.parse(form.getAll('ref')) };
 }
 
+/** Runs an action; `at` is the server time it finished, compared with `listedAt` and `countedAt`. */
 async function run(fn: () => Promise<void>) {
 	try {
 		await fn();
-		return { ok: true };
+		return { ok: true, at: Date.now() };
 	} catch (error) {
 		if (error instanceof MailError) return fail(error.status, { error: error.message });
 		if (error instanceof InvalidMessageRefError || error instanceof z.ZodError) {

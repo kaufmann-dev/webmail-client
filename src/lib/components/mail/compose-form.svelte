@@ -93,8 +93,9 @@
 
 	// Going back is safe only to a page this document showed. Going back past the page load
 	// unloads the document, which cancels a send that is still uploading and drops its toast.
-	let openedInApp = false;
-	afterNavigate(({ from }) => (openedInApp = from !== null));
+	// Decided by the navigation that opened the editor, not by the URL update after saving.
+	let openedInApp: boolean | null = null;
+	afterNavigate(({ from }) => (openedInApp ??= from !== null));
 
 	function leave() {
 		dirty = false;
@@ -192,6 +193,12 @@
 				files = [];
 				dirty = false;
 				toast.success('Draft saved');
+				// The saved draft replaced the one in the URL; a reload opens the new one. Shallow, so
+				// the editor stays.
+				goto(`${resolve('/(app)/compose')}?${new URLSearchParams({ draft: draftRef })}`, {
+					replace: true,
+					shallow: true
+				});
 			};
 		}
 
@@ -229,7 +236,10 @@
 			},
 			files: [...files]
 		});
-		return async ({ result }) => finish(result.type === 'success' ? null : failure(result));
+		return async ({ result }) =>
+			result.type === 'success'
+				? finish(null, result.data?.draftKept === true)
+				: finish(failure(result));
 	};
 
 	/** Busy and free times of the attendees on the meeting's day (Exchange accounts). */

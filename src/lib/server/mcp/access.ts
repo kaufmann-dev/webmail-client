@@ -4,7 +4,7 @@ import { mailAccount, mcpAccountAccess } from '../db/schema';
 import {
 	ACCESS_LEVELS,
 	ACCESS_LEVEL_LABELS,
-	isMaxAgeDays,
+	storedMaxAgeDays,
 	type AccessLevel,
 	type AccountGrant,
 	type MessageSummary
@@ -65,7 +65,7 @@ export class McpAccess {
 		return new McpAccess(
 			rows.map((row) => ({
 				...row,
-				maxAgeDays: row.maxAgeDays !== null && isMaxAgeDays(row.maxAgeDays) ? row.maxAgeDays : null
+				maxAgeDays: storedMaxAgeDays(row.maxAgeDays)
 			}))
 		);
 	}

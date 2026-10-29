@@ -1,5 +1,6 @@
 import type {
 	FetchMessageObject,
+	ImapFlow,
 	MailboxObject,
 	MessageAddressObject,
 	MessageStructureObject,
@@ -17,10 +18,11 @@ import type {
 } from '../../mail-types';
 import { getAccount } from './accounts';
 import { bodyText, previewOf } from './body-text';
-import { errorMessage, MailError } from './errors';
+import { errorMessage, MailError, MessageGoneError } from './errors';
 import * as ews from './ews/messages';
 import { ensureArchiveFolder, getFolders, requireFolder, resolveFolder } from './folders';
 import { withMailbox } from './imap';
+import { ownResponse } from './invitation-responses';
 import { findCalendarPart, isCalendarPart, parseInvitation } from './invitations';
 import { decodeCursor, encodeCursor, mergePages, trimPage, type AccountPage } from './merge';
 import {
@@ -44,6 +46,23 @@ import {
 import type { MailAccount } from './types';
 
 export const DEFAULT_PAGE_SIZE = 50;
+
+/** imapflow reports a refused or interrupted command as `false` (or `undefined`) instead of throwing. */
+export function required<T>(result: T | false | undefined, account: MailAccount, what: string): T {
+	if (result === false || result === undefined) {
+		throw new MailError(`${account.email}: the mail server could not ${what}.`, 502);
+	}
+	return result;
+}
+
+/** The UIDs matching a search in the selected mailbox; a failed search throws instead of finding none. */
+export async function searchUids(
+	client: ImapFlow,
+	account: MailAccount,
+	query: SearchObject
+): Promise<number[]> {
+	return required(await client.search(query, { uid: true }), account, 'search the folder');
+}
 
 export interface MessageFilters {
 	filter?: ListFilter;
@@ -166,7 +185,7 @@ async function fetchAccountPage(
 ): Promise<AccountPage> {
 	return withMailbox(account, path, async (client, mailbox) => {
 		if (beforeUid !== undefined && beforeUid <= 1) {
-			return { accountId: account.id, items: [], exhausted: true };
+			return { accountId: account.id, items: [], exhausted: true, last: null };
 		}
 		const fields = threads ? THREAD_FETCH : SUMMARY_FETCH;
 		const toItems = (fetched: FetchMessageObject[]) =>
@@ -175,18 +194,29 @@ async function fetchAccountPage(
 		// UIDs; SEARCH ALL would return every UID in the folder.
 		if (beforeUid === undefined && Object.keys(search).length === 0) {
 			const exists = mailbox.exists;
-			if (!exists) return { accountId: account.id, items: [], exhausted: true };
+			if (!exists) return { accountId: account.id, items: [], exhausted: true, last: null };
 			const fetched = await client.fetchAll(`${Math.max(1, exists - limit + 1)}:${exists}`, fields);
-			return { accountId: account.id, items: toItems(fetched), exhausted: exists <= limit };
+			const items = toItems(fetched);
+			return {
+				accountId: account.id,
+				items,
+				exhausted: exists <= limit,
+				last: items.at(-1)?.cursor ?? null
+			};
 		}
 		const query: SearchObject = { ...search };
 		if (beforeUid !== undefined) query.uid = `1:${beforeUid - 1}`;
 		if (Object.keys(query).length === 0) query.all = true;
-		const found = ((await client.search(query, { uid: true })) || []).sort((a, b) => a - b);
+		const found = (await searchUids(client, account, query)).sort((a, b) => a - b);
 		const picked = found.slice(-limit);
-		if (!picked.length) return { accountId: account.id, items: [], exhausted: true };
+		if (!picked.length) return { accountId: account.id, items: [], exhausted: true, last: null };
 		const fetched = await client.fetchAll(picked, fields, { uid: true });
-		return { accountId: account.id, items: toItems(fetched), exhausted: found.length <= limit };
+		return {
+			accountId: account.id,
+			items: toItems(fetched),
+			exhausted: found.length <= limit,
+			last: picked[0]
+		};
 	});
 }
 
@@ -220,7 +250,7 @@ async function accountPage(
 	options: ListOptions
 ): Promise<AccountPage> {
 	const path = await resolveFolder(account, folder);
-	if (!path) return { accountId: account.id, items: [], exhausted: true };
+	if (!path) return { accountId: account.id, items: [], exhausted: true, last: null };
 	const notBefore = options.notBefore?.get(account.id);
 	const accountFilters = notBefore ? withinWindow(filters, notBefore) : filters;
 	const page =
@@ -236,7 +266,7 @@ async function accountPage(
 					limit,
 					options.threads ?? false
 				);
-	return notBefore ? trimPage(page, notBefore) : page;
+	return notBefore ? trimPage(page, notBefore, account.provider === 'exchange') : page;
 }
 
 /**
@@ -287,12 +317,12 @@ function mergeResults(results: Iterable<AccountResult>, pending: string[]): Mess
 		if ('page' in result) pages.push(result.page);
 		else errors.push(result.error);
 	}
-	// Accounts still loading count as done for paging, so "Load more" never puts their newest mail
-	// below older mail of the others.
+	// Accounts still loading or failed count as done for paging, so "Load more" never puts their
+	// newest mail below older mail of the others.
 	const merged = mergePages(
 		pages,
 		DEFAULT_PAGE_SIZE,
-		Object.fromEntries(pending.map((id) => [id, 0]))
+		Object.fromEntries([...pending, ...errors.map((e) => e.accountId)].map((id) => [id, 0]))
 	);
 	return {
 		messages: merged.messages,
@@ -335,7 +365,7 @@ export async function resolveRef(
 
 function assertSameMailbox(mailbox: MailboxObject, locator: ImapLocator): void {
 	if (String(mailbox.uidValidity) !== locator.uidValidity) {
-		throw new MailError('This folder changed on the server. Reload the message list.', 409);
+		throw new MessageGoneError('This folder changed on the server. Reload the message list.', 409);
 	}
 }
 
@@ -356,7 +386,7 @@ async function fetchForReading(account: MailAccount, locator: ImapLocator) {
 			{ ...SUMMARY_FETCH, size: true, source: { start: 0, maxLength: WHOLE_MESSAGE_BYTES } },
 			{ uid: true }
 		);
-		if (!message || !message.source) throw new MailError('This message no longer exists.', 404);
+		if (!message || !message.source) throw new MessageGoneError();
 		const plan = planMessage(message.bodyStructure);
 		if ((message.size ?? Infinity) <= WHOLE_MESSAGE_BYTES) {
 			return { message, mailbox, plan, source: message.source };
@@ -364,7 +394,7 @@ async function fetchForReading(account: MailAccount, locator: ImapLocator) {
 		const rest = plan.whole
 			? await client.fetchOne(uid, { source: true }, { uid: true })
 			: await client.fetchOne(uid, { headers: true, bodyParts: plan.fetch }, { uid: true });
-		if (!rest) throw new MailError('This message no longer exists.', 404);
+		if (!rest) throw new MessageGoneError();
 		const source =
 			plan.whole || !message.bodyStructure
 				? rest.source
@@ -373,7 +403,7 @@ async function fetchForReading(account: MailAccount, locator: ImapLocator) {
 						message.bodyStructure,
 						rest.bodyParts ?? new Map()
 					);
-		if (!source) throw new MailError('This message no longer exists.', 404);
+		if (!source) throw new MessageGoneError();
 		return { message, mailbox, plan, source };
 	});
 }
@@ -518,24 +548,41 @@ function readSize({ detail, newText, calendar }: ReadMessage): number {
 	);
 }
 
+/** Drops a message from the read cache, e.g. after it changed in a way `setFlags` does not cover. */
+export function forgetMessage(ref: string): void {
+	forget(ref);
+}
+
+/** A read with the user's recorded answer to its invitation, which the calendar part lacks. */
+async function withOwnResponse(account: MailAccount, read: ReadMessage): Promise<ReadMessage> {
+	const { invitation } = read.detail;
+	const response = invitation ? await ownResponse(account.id, invitation) : null;
+	if (invitation && response) invitation.ownStatus = response;
+	return read;
+}
+
 /**
- * Fetches and parses one message, from the cache when it was read recently. Reading never marks
- * it as seen; see `setFlags`.
+ * Fetches and parses one message, from the cache when it was read recently (unless `fresh`).
+ * Reading never marks it as seen; see `setFlags`.
  */
-export function getMessage(account: MailAccount, locator: MessageLocator): Promise<ReadMessage> {
+export function getMessage(
+	account: MailAccount,
+	locator: MessageLocator,
+	options: { fresh?: boolean } = {}
+): Promise<ReadMessage> {
 	const key = encodeMessageRef(locator);
 	const hit = cache.get(key);
-	if (hit && hit.expires > Date.now()) {
+	if (hit && hit.expires > Date.now() && !options.fresh) {
 		cache.delete(key);
 		cache.set(key, hit);
 		return hit.value;
 	}
 	forget(key);
 	const entry: CacheEntry = {
-		value:
-			account.provider === 'exchange'
-				? ews.readMessage(account, ewsLocator(locator))
-				: readImapMessage(account, imapLocator(locator)),
+		value: (account.provider === 'exchange'
+			? ews.readMessage(account, ewsLocator(locator))
+			: readImapMessage(account, imapLocator(locator))
+		).then((read) => withOwnResponse(account, read)),
 		bytes: 0,
 		expires: Date.now() + CACHE_TTL_MS
 	};
@@ -567,6 +614,12 @@ export async function getAttachments(
 	if (!partIds.length) return [];
 	if (account.provider === 'exchange') {
 		ewsLocator(messageLocator);
+		// Exchange fetches attachments by their own IDs; only those of this message may be fetched.
+		const { detail } = await getMessage(account, messageLocator);
+		const listed = new Set(detail.attachments.map((a) => a.partId));
+		if (partIds.some((partId) => !listed.has(partId))) {
+			throw new MailError('Attachment not found.', 404);
+		}
 		return ews.getAttachments(account, partIds);
 	}
 	const locator = imapLocator(messageLocator);
@@ -574,7 +627,7 @@ export async function getAttachments(
 		assertSameMailbox(mailbox, locator);
 		const uid = String(locator.uid);
 		const message = await client.fetchOne(uid, { bodyStructure: true }, { uid: true });
-		if (!message) throw new MailError('This message no longer exists.', 404);
+		if (!message) throw new MessageGoneError();
 		const { attachments } = planMessage(message.bodyStructure);
 		const files = [];
 		for (const partId of partIds) {
@@ -727,8 +780,10 @@ export async function setFlags(
 					['\\Flagged', flags.flagged]
 				] as const) {
 					if (on === undefined) continue;
-					if (on) await client.messageFlagsAdd(group.uids, [flag], { uid: true });
-					else await client.messageFlagsRemove(group.uids, [flag], { uid: true });
+					const done = on
+						? await client.messageFlagsAdd(group.uids, [flag], { uid: true })
+						: await client.messageFlagsRemove(group.uids, [flag], { uid: true });
+					required(done, group.account, 'update the messages');
 				}
 			});
 		}
@@ -750,8 +805,12 @@ export async function markAnswered(groups: RefGroup[]): Promise<void> {
 	for (const group of groups) {
 		if (group.kind === 'ews') await ews.markAnswered(group.account, group.itemIds);
 		else {
-			await inGroup(group, (client) =>
-				client.messageFlagsAdd(group.uids, ['\\Answered'], { uid: true })
+			await inGroup(group, async (client) =>
+				required(
+					await client.messageFlagsAdd(group.uids, ['\\Answered'], { uid: true }),
+					group.account,
+					'mark the message answered'
+				)
 			);
 		}
 	}
@@ -791,9 +850,14 @@ export function movedImapRefs(
 	return refs;
 }
 
+/** Gmail folders that archiving moves out of; other labels only lose the Inbox label. */
+const GMAIL_MOVE_ROLES = ['inbox', 'spam', 'trash'] as const;
+
 /**
- * Moves messages; a no-op for messages already in the target folder. Returns the new ref of each
- * moved message by its old ref, as far as the server reports them.
+ * Moves messages; a no-op for messages already in the target folder. Archiving on Gmail outside
+ * Inbox, Spam, and Trash removes the Inbox label instead (Gmail's archive), and the messages stay
+ * where they are. Returns the new ref of each moved message by its old ref, as far as the server
+ * reports them.
  */
 export async function moveMessages(
 	groups: RefGroup[],
@@ -808,6 +872,21 @@ export async function moveMessages(
 					? await requireFolder(group.account, target)
 					: await requireFolder(group.account, target.path);
 		if (destination === group.path) continue;
+		if (
+			target === 'archive' &&
+			group.kind === 'imap' &&
+			group.account.provider === 'gmail' &&
+			!(await rolePaths(group.account, GMAIL_MOVE_ROLES)).includes(group.path)
+		) {
+			await inGroup(group, async (client) =>
+				required(
+					await client.messageFlagsRemove(group.uids, ['\\Inbox'], { uid: true, useLabels: true }),
+					group.account,
+					'archive the messages'
+				)
+			);
+			continue;
+		}
 		forgetGroup(group);
 		if (group.kind === 'ews') {
 			const ids = await ews.moveItems(group.account, group.itemIds, destination);
@@ -821,15 +900,19 @@ export async function moveMessages(
 				);
 			});
 		} else {
-			const result = await inGroup(group, (client) =>
-				client.messageMove(group.uids, destination, { uid: true })
+			const result = await inGroup(group, async (client) =>
+				required(
+					await client.messageMove(group.uids, destination, { uid: true }),
+					group.account,
+					'move the messages'
+				)
 			);
-			if (result) {
-				for (const [from, to] of movedImapRefs(group, { ...result, destination })) {
-					moved.set(from, to);
-				}
+			for (const [from, to] of movedImapRefs(group, { ...result, destination })) {
+				moved.set(from, to);
 			}
 		}
+		// A read while the move ran may have cached the old ref again.
+		forgetGroup(group);
 	}
 	return moved;
 }
@@ -839,7 +922,17 @@ export async function deleteMessages(groups: RefGroup[]): Promise<void> {
 	for (const group of groups) {
 		forgetGroup(group);
 		if (group.kind === 'ews') await ews.deleteItems(group.account, group.itemIds);
-		else await inGroup(group, (client) => client.messageDelete(group.uids, { uid: true }));
+		else {
+			await inGroup(group, async (client) =>
+				required(
+					await client.messageDelete(group.uids, { uid: true }),
+					group.account,
+					'delete the messages'
+				)
+			);
+		}
+		// A read while the delete ran may have cached the old ref again.
+		forgetGroup(group);
 	}
 }
 
@@ -865,7 +958,7 @@ async function searchFolders(
 			for (let i = 0; i < criteria.length; i += CRITERIA_PER_SEARCH) {
 				const chunk = criteria.slice(i, i + CRITERIA_PER_SEARCH);
 				const query: SearchObject = chunk.length === 1 ? chunk[0] : { or: chunk };
-				for (const uid of (await client.search(query, { uid: true })) || []) uids.add(uid);
+				for (const uid of await searchUids(client, account, query)) uids.add(uid);
 			}
 			const picked = [...uids].sort((a, b) => a - b).slice(-MAX_MEMBERS);
 			if (!picked.length) return;
@@ -1068,8 +1161,8 @@ export async function messagePreviews(
 
 /**
  * Finds a message by its Message-ID header after it moved without this app (in another mail
- * program, or by a server rule): its last folder first, then the role folders, then every other
- * folder. Null when it is in none of them.
+ * program, or by a server rule): its last folder first, then the other folders, Drafts and Sent
+ * last. Null when it is in none of them.
  */
 export async function findMessage(
 	account: MailAccount,
@@ -1077,7 +1170,10 @@ export async function findMessage(
 	lastPath: string
 ): Promise<string | null> {
 	const folders = await getFolders(account);
-	const paths = [lastPath, ...folders.map((f) => f.path).filter((path) => path !== lastPath)];
+	// Drafts and Sent last: the Sent copy of a message sent to oneself shares its Message-ID.
+	const late = (f: { role: string | null }) => f.role === 'drafts' || f.role === 'sent';
+	const others = [...folders.filter((f) => !late(f)), ...folders.filter(late)];
+	const paths = [lastPath, ...others.map((f) => f.path).filter((path) => path !== lastPath)];
 	for (const path of paths) {
 		if (account.provider === 'exchange') {
 			const itemId = await ews.findByMessageId(account, path, messageId).catch(() => null);
@@ -1085,8 +1181,7 @@ export async function findMessage(
 			continue;
 		}
 		const found = await withMailbox(account, path, async (client, mailbox) => {
-			const uids =
-				(await client.search({ header: { 'message-id': messageId } }, { uid: true })) || [];
+			const uids = await searchUids(client, account, { header: { 'message-id': messageId } });
 			return uids.length
 				? { uid: Math.max(...uids), uidValidity: String(mailbox.uidValidity) }
 				: null;

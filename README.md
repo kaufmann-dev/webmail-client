@@ -15,15 +15,18 @@ and on the consent screen you choose which mail accounts each app may use and at
   unified view (`/mail/<id>+<id>/inbox`). Switching keeps the kind of folder you are in, and `0`–`9` switch from the
   keyboard. Lists are grouped by date (Today, Yesterday, This week, Last week, then by month).
   Also search (Gmail search syntax for Gmail), unread and starred filters, multi-select
-  actions, moving messages by dragging them onto a folder, creating, renaming, moving, and deleting
+  actions (Archive on Gmail removes the Inbox label, as Gmail does, so a message stays in its other
+  labels), moving messages by dragging them onto a folder, creating, renaming, moving, and deleting
   an account's own folders from the sidebar (subfolders also below Inbox and the other standard
   folders, except on Gmail), keyboard shortcuts (`?` lists them), and a conversation
   view.
 - **Reading:** HTML mail renders in a sandboxed frame with no scripts. Remote images load right
   away, except in Spam, where they stay blocked until you load them.
 - **Invitations:** calendar invitations show their time, place, and organizer. Accept, Maybe, and
-  Decline send the standard calendar reply to the organizer. The provider's own calendar does not
-  learn the answer, except on Exchange, which answers its own meeting requests.
+  Decline send the standard calendar reply to the organizer, and the invitation keeps showing your
+  answer until the organizer sends an update. The provider's own calendar does not learn the
+  answer, except on Exchange, which answers its own meeting requests (and usually moves them to
+  Deleted Items).
 - **Meetings:** the Meeting button in the editor turns a new message or draft into an invitation
   with date, start, end, and location (To are required, Cc optional attendees). Meeting drafts
   reopen as meetings. Exchange accounts create the meeting in the calendar and track the answers,

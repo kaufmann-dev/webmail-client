@@ -23,7 +23,7 @@
 
 	async function revoke(clientId: string) {
 		revoked.add(clientId);
-		const error = await postAction(`${resolve('/(app)/settings/connected-apps')}?/revoke`, {
+		const { error } = await postAction(`${resolve('/(app)/settings/connected-apps')}?/revoke`, {
 			clientId
 		});
 		if (error) {

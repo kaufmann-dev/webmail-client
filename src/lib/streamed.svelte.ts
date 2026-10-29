@@ -2,6 +2,8 @@
 class Streamed<T> {
 	current = $state.raw<T | null>(null);
 	failed = $state(false);
+	/** The value arrived or failed. */
+	done = $state(false);
 }
 
 const wrappers = new WeakMap<object, Streamed<unknown>>();
@@ -17,11 +19,18 @@ export function streamed<T>(value: T | Promise<T>): Streamed<T> {
 	const result = new Streamed<T>();
 	if (value instanceof Promise) {
 		value.then(
-			(resolved) => (result.current = resolved),
-			() => (result.failed = true)
+			(resolved) => {
+				result.current = resolved;
+				result.done = true;
+			},
+			() => {
+				result.failed = true;
+				result.done = true;
+			}
 		);
 	} else {
 		result.current = value;
+		result.done = true;
 	}
 	if (key) wrappers.set(key, result);
 	return result;

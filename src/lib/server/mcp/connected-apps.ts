@@ -8,7 +8,7 @@ import {
 	oauthConsent,
 	oauthRefreshToken
 } from '../db/schema';
-import { isMaxAgeDays, type AccountGrant } from '../../mail-types';
+import { isMaxAgeDays, storedMaxAgeDays, type AccountGrant } from '../../mail-types';
 
 export interface ConnectedApp {
 	clientId: string;
@@ -68,7 +68,7 @@ async function accessFor(
 		);
 	return rows.map((row) => ({
 		...row,
-		maxAgeDays: row.maxAgeDays !== null && isMaxAgeDays(row.maxAgeDays) ? row.maxAgeDays : null
+		maxAgeDays: storedMaxAgeDays(row.maxAgeDays)
 	}));
 }
 

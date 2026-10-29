@@ -1,6 +1,6 @@
 import { clearAccountError, recordAccountError } from '../account-status';
 import { mailAuth } from '../credentials';
-import { errorMessage, MailAuthError, MailError } from '../errors';
+import { errorMessage, MailAuthError, MailError, MessageGoneError } from '../errors';
 import type { MailAccount } from '../types';
 import { attr, child, list, parseXml, text, type XmlNode } from './xml';
 
@@ -66,7 +66,7 @@ export function check(message: XmlNode | undefined): XmlNode {
 	if (attr(message, 'ResponseClass') !== 'Error') return message;
 	const code = text(message.ResponseCode);
 	if (code === 'ErrorItemNotFound' || code === 'ErrorInvalidIdMalformed') {
-		throw new MailError('This message no longer exists.', 404);
+		throw new MessageGoneError();
 	}
 	throw new MailError(`Exchange: ${text(message.MessageText) || code}`, 502);
 }

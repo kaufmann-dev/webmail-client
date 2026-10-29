@@ -5,10 +5,12 @@ import type { LayoutServerLoad } from './$types';
 /**
  * The message list. Kept apart from the page load so opening a message does not re-list. The
  * first page streams the accounts that answered in time; navigations and refreshes wait for them,
- * keeping the current list until then. Slower accounts follow in `lateList`.
+ * keeping the current list until then. Slower accounts follow in `lateList`. `listedAt` is the
+ * server time listing began: actions that finished before it are in the list.
  */
 export const load: LayoutServerLoad = async ({ params, url, locals, depends, isDataRequest }) => {
 	depends('mail:list');
+	const listedAt = Date.now();
 	const folder = params.folder || 'inbox';
 	const accounts = await scopeAccounts(locals.user.id, params.scope, folder);
 	const filter = parseFilter(url.searchParams.get('filter'));
@@ -25,6 +27,7 @@ export const load: LayoutServerLoad = async ({ params, url, locals, depends, isD
 		folder,
 		filter,
 		query,
+		listedAt,
 		list: isDataRequest ? await early : early,
 		lateList: late
 	};

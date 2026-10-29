@@ -26,7 +26,7 @@ import { parseAddressList } from '../mail/addresses';
 import { attachmentText } from '../mail/attachment-text';
 import { findMeetingTimes } from '../mail/availability';
 import { groupConversations, type Conversation } from '../mail/conversations';
-import { errorMessage, MailError } from '../mail/errors';
+import { errorMessage, MailError, MessageGoneError } from '../mail/errors';
 import {
 	createFolder,
 	deleteFolder,
@@ -48,6 +48,7 @@ import {
 	listMessages,
 	messagePreviews,
 	moveMessages,
+	receivedDates,
 	setFlags,
 	type MessageFilters
 } from '../mail/messages';
@@ -272,13 +273,46 @@ export function createMcpServer(
 			return await fn(row.locator);
 		} catch (error) {
 			const account = accountsById.get(row.accountId);
-			const gone = error instanceof MailError && (error.status === 404 || error.status === 409);
-			if (!gone || !account || !row.messageId) throw error;
+			if (!(error instanceof MessageGoneError) || !account || !row.messageId) throw error;
 			const found = await findMessage(account, row.messageId, decodeMessageRef(row.locator).path);
 			if (!found || found === row.locator) throw error;
 			await refs.moved(new Map([[row.locator, found]]));
 			return fn(found);
 		}
+	}
+
+	/**
+	 * The mail-layer refs of short refs for a bulk action. Messages that moved without these tools
+	 * are found again by their Message-ID; any that are gone fail the action.
+	 */
+	async function currentLocators(shortRefs: string[]): Promise<string[]> {
+		const rows = await refs.resolveAll(shortRefs);
+		const moves = new Map<string, string>();
+		let missing = 0;
+		for (const account of accountsById.values()) {
+			const accountRows = rows.filter((row) => row.accountId === account.id);
+			if (!accountRows.length) continue;
+			const dates = await receivedDates(
+				account,
+				accountRows.map((row) => decodeMessageRef(row.locator))
+			);
+			for (const row of accountRows) {
+				if (dates.has(row.locator)) continue;
+				const { path } = decodeMessageRef(row.locator);
+				const found = row.messageId ? await findMessage(account, row.messageId, path) : null;
+				if (found && found !== row.locator) moves.set(row.locator, found);
+				else missing++;
+			}
+		}
+		if (moves.size) await refs.moved(moves);
+		if (missing) {
+			throw new MessageGoneError(
+				missing === 1
+					? 'One of these messages no longer exists.'
+					: `${missing} of these messages no longer exist.`
+			);
+		}
+		return rows.map((row) => moves.get(row.locator) ?? row.locator);
 	}
 
 	async function shortRefOf(ref: string, accountId: string, messageId: string | null) {
@@ -336,17 +370,22 @@ export function createMcpServer(
 			in_reply_to: draft.inReplyTo
 		};
 		if (how === 'draft') {
-			const ref = await saveDraft(userId, draft, options.replacesDraftRef);
+			const { ref, messageId } = await saveDraft(userId, draft, options.replacesDraftRef);
 			transfers.releaseUploads(options.uploadIds ?? []);
 			return {
 				status: 'draft_saved',
-				draft_ref: await shortRefOf(ref, draft.accountId, null),
+				draft_ref: await shortRefOf(ref, draft.accountId, messageId),
 				...recipients
 			};
 		}
 		const result = await sendDraft(userId, draft, options);
 		transfers.releaseUploads(options.uploadIds ?? []);
-		return { status: 'sent', message_id: result.messageId, ...recipients };
+		return {
+			status: 'sent',
+			message_id: result.messageId,
+			...recipients,
+			...(result.draftKept && { draft_kept: true })
+		};
 	}
 
 	server.registerTool(
@@ -973,6 +1012,7 @@ export function createMcpServer(
 			title: 'Update messages',
 			description:
 				'Marks messages read/unread or starred/unstarred, or moves them to archive, trash, spam, inbox, or a folder. ' +
+				'On Gmail, archive removes the Inbox label; outside Inbox, Spam, and Trash the messages stay where they are. ' +
 				'Their message_refs stay valid after moving.',
 			inputSchema: z.object({
 				message_refs: z.array(messageRef).min(1).max(200),
@@ -993,7 +1033,7 @@ export function createMcpServer(
 		},
 		({ message_refs, action, folder }) =>
 			guard(async () => {
-				const locators = (await refs.resolveAll(message_refs)).map((row) => row.locator);
+				const locators = await currentLocators(message_refs);
 				await access.requireMessages(locators, 'organize');
 				const groups = await groupRefs(userId, locators);
 				switch (action) {
@@ -1321,7 +1361,7 @@ export function createMcpServer(
 				account: accountRef,
 				attendees: recipientList.min(1).max(20),
 				date_from: date,
-				date_to: date.describe('Last day, inclusive; at most 14 days after date_from.'),
+				date_to: date.describe('Last day, inclusive; the span covers at most 14 days.'),
 				duration_minutes: z.number().int().min(5).max(480),
 				time_zone: timeZone,
 				workday_start: clockTime.default('08:00').describe('HH:MM in time_zone.'),

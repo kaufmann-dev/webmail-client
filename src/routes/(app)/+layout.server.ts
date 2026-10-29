@@ -18,6 +18,8 @@ function mailboxes(results: Map<string, Mailbox>) {
 
 export const load: LayoutServerLoad = async ({ locals, depends, isDataRequest }) => {
 	depends('mail:counts');
+	// The server time counting began: actions that finished before it are in the counts.
+	const countedAt = Date.now();
 	const accounts = await listAccounts(locals.user.id);
 	const stages = inStages<Mailbox>(
 		accounts,
@@ -38,6 +40,7 @@ export const load: LayoutServerLoad = async ({ locals, depends, isDataRequest })
 	return {
 		user,
 		accounts: accounts.map(toSummary),
+		countedAt,
 		mailboxes: isDataRequest ? await early : early,
 		lateMailboxes: late
 	};

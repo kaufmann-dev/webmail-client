@@ -28,7 +28,9 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
   `src/lib/server/env.ts` and to `.env.example`.
 - Import app code through `#lib/...` with `.js` extensions, not `$lib`.
 - `resolve()` route IDs include the `(app)` group, e.g. `resolve('/(app)/compose')`.
-- `goto` options are `replace` and `reset` (no `replaceState`, `noScroll`, or `keepFocus`).
+- `goto` options are `replace`, `reset`, and `shallow` (with `state`; it changes the URL without
+  loading and still runs navigation callbacks). There is no `replaceState`, `noScroll`, or
+  `keepFocus`.
 - Svelte 5 runes only; avoid `$effect`. Remote functions are not used.
 - shadcn-svelte components in `src/lib/components/ui` are generated; adding more needs a temporary
   `tsconfig.json` with explicit `$lib` paths, then rewriting their `$lib/` imports to `#lib/`.
@@ -53,15 +55,24 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
     cancellations, native meeting responses), and `calendar.ts` (free/busy through
     `GetUserAvailability`, which `ewsOperation` calls because it has no response messages and
     which needs a UTC zone with two distinct transitions; sent meetings found by UID in a calendar
-    view of their time). Lists page by position and skip items Exchange is still sending (a sent
-    meeting's invitation passes through Drafts). Reading fetches the calendar part of meeting
-    messages and of messages carrying a calendar part (meeting drafts).
+    view of their time). Lists page by received time (`timeCursors` in `items.ts`, so moving or
+    flagging listed messages shifts no page; text searches page by position) and, like
+    conversations, skip items Exchange is still sending (a sent meeting's invitation passes
+    through Drafts). Reading fetches the calendar part of meeting messages and of messages
+    carrying a calendar part (meeting drafts); a failed fetch fails the read rather than losing
+    the meeting. X.500 sender addresses are resolved in small batches, and only answers are
+    remembered.
   - `messages.ts`: listing, search, reading, moving, and threads. The web list's first page uses
     `listMessagesInStages` (accounts still loading are left out of paging); MCP and "Load more"
     use `listMessages`, which waits for every account. Reading fetches only body text,
     calendar parts, and embedded images (`structure.ts`); attachments download on demand. Read
     messages stay in an in-memory cache that `setFlags`, `moveMessages`, and `deleteMessages` keep
-    current.
+    current; drafts are read `fresh`, since Exchange keeps a draft's item ID when another program
+    edits it. imapflow reports failed commands as `false`: check every STORE, MOVE, EXPUNGE, and
+    SEARCH result with `required` / `searchUids`. On Gmail, archiving outside Inbox, Spam, and
+    Trash removes the Inbox label and leaves the message where it is. Paged lists continue past
+    messages they leave out (`AccountPage.last`), and accounts that are slow or failed count as
+    done for "Load more".
   - `compose.ts`: drafts and sending. Outgoing mail is HTML (`html-body.ts`: the document around
     the editor HTML, in the account's font from `MAIL_FONTS` in `src/lib/html.ts` or none, and its
     `html-to-text` plain-text alternative); `data:` images go out as embedded parts.
@@ -102,8 +113,12 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
   `groupRefs`, which scope accounts to the user; `imapLocator` / `ewsLocator` reject a ref of the
   wrong kind. MCP clients never see these refs: `mcp/refs.ts` maps them to 10-character refs in
   `mcp_message_ref`. `moveMessages` returns the new refs of moved messages so short refs follow
-  them, and `withMessage` in `tools.ts` finds a message moved elsewhere by its Message-ID.
-- Mail is never stored in the database (`mcp_message_ref` holds identifiers only). Credentials are AES-GCM encrypted with `CREDENTIALS_KEY`
+  them, and `withMessage` in `tools.ts` finds a message moved elsewhere by its Message-ID when an
+  operation throws `MessageGoneError` (`errors.ts`, thrown wherever a ref no longer finds its
+  message); `update_messages` looks up moved messages the same way before acting.
+- Mail is never stored in the database (`mcp_message_ref` holds identifiers only;
+  `invitation_response` holds the user's answer per invitation UID and SEQUENCE, which reading
+  applies as `Invitation.ownStatus`, since the invitation's own calendar part never records it). Credentials are AES-GCM encrypted with `CREDENTIALS_KEY`
   (`crypto.ts`, `credentials.ts`); never return `MailAccount.secret` to the browser (use
   `toSummary`).
 - Throw `MailError` for messages that are safe to show users and AI clients.
@@ -143,10 +158,12 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
     the short refs of messages in the changed subtree (`McpRefs.folderMoved`).
 - Tool results are compact JSON that leave out defaults: boolean flags only when true, `account`
   only when results span several accounts, `to` in lists only when it is not just the account.
+  A send whose draft could not be deleted afterwards reports `draft_kept`.
 - Attachment bytes never pass through tool calls. `get_attachment` returns readable content
   (`mail/attachment-text.ts`: text files, and documents as Markdown via `officeparser`) and a
   download link; `create_attachment_upload` returns an upload link, and sending tools take
-  `{upload_id}` or `{message_ref, part_id}`. The links (`mcp/transfers.ts`, routes
+  `{upload_id}` or `{message_ref, part_id}`. Exchange attachment IDs are checked against the
+  message's own attachments, so a part ID cannot reach a message outside the time window. The links (`mcp/transfers.ts`, routes
   `/mcp/files/[token]` and `/mcp/uploads/[token]`) live in memory only, are authenticated by their
   token alone, and are bound to the user and OAuth client; downloads check access again when
   fetched.
@@ -168,10 +185,14 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
 - Icon buttons explain themselves on hover with `TooltipButton` (`src/lib/components/tooltip-button.svelte`,
   `shortcut` for a keyboard key), not `title`. They still need an `sr-only` or `aria-label` name.
 - User actions show their result at once and finish in the background (`postAction` in
-  `src/lib/form-action.ts`); a failure undoes the change and shows a toast. Sending continues after
-  the editor closes (`src/lib/outbox.ts`), so closing it never leaves the page load: going back past
-  it would unload the document and cancel the send. Drafts being sent or discarded leave lists at
-  once (`leavingDrafts`) and come back if that fails.
+  `src/lib/form-action.ts`, resolving to `{ error, data }`); a failure undoes the change and shows
+  a toast. Message actions reach the server in the order they were made. A finished change stays
+  applied until data the server began loading after it finished arrives: actions return their
+  server time `at`, the list `listedAt`, the counts `countedAt`. Flag changes reload nothing; the
+  next scheduled refresh confirms them. Sending continues after the editor closes
+  (`src/lib/outbox.ts`), so closing it never leaves the page load: going back past it would unload
+  the document and cancel the send. Drafts being sent or discarded leave lists at once
+  (`leavingDrafts`) and come back if that fails, or if the sent draft could not be deleted.
 - The open message streams from the page load, which must stay free of side effects because links
   preload on tap (not hover, which would queue reads ahead of the click) and the next message
   preloads after one opens. The page marks a message read once it is shown.
@@ -181,8 +202,11 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
   first stage had them all; an account that never answers fails after 60 s). The list names the
   accounts still loading. The first document load streams both stages (`streamed` in
   `src/lib/streamed.svelte.ts`), so the shell shows at once; data requests (navigations and
-  refreshes) await the first stage, keeping the current view until then. Only the first stage
-  counts as new data for applied changes. Narrowing the account selection within the same view hides the other
-  accounts' messages at once (`narrowedScope`) while the new list loads.
+  refreshes) await the first stage, keeping the current view until then. A new list or mailboxes
+  of the same view keep what was shown for accounts they still wait for, and the pages "Load more"
+  added (`src/lib/list-refresh.ts`). Narrowing the account selection within the same view hides
+  the other accounts' messages at once (`narrowedScope`) while the new list loads, and links
+  already lead to the narrowed view. The window's focus refreshes the list, except when focus
+  comes back from the message frame.
 - Every `overflow-y-auto` scroll area is also `relative`. Otherwise `sr-only` labels inside it
   (absolutely positioned) are placed against the page and stretch it past the `h-dvh` shell.
