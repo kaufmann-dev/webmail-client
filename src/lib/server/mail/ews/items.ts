@@ -10,9 +10,10 @@ export interface EwsItem {
 	node: XmlNode;
 }
 
-/** Item types that carry `IsRead` (all derive from EWS `MessageType`). */
+/** Item types that carry `IsRead`: `PostItem` and those deriving from EWS `MessageType`. */
 export const MESSAGE_TYPES = new Set([
 	'Message',
+	'PostItem',
 	'MeetingMessage',
 	'MeetingRequest',
 	'MeetingResponse',
@@ -62,9 +63,18 @@ export function isExchangeAddress(address: string): boolean {
 	return address.startsWith('/');
 }
 
-/** An outgoing item Exchange has submitted but not sent yet, such as a meeting's invitation in Drafts. */
-export function inTransit(node: XmlNode): boolean {
-	return text(node.IsSubmitted) === 'true' && text(node.IsDraft) === 'true';
+/** How long Exchange may take to send a submitted item before it counts as stuck. */
+const STUCK_MS = 15 * 60_000;
+
+/**
+ * An outgoing item Exchange has submitted but not sent yet, such as a meeting's invitation in
+ * Drafts. One still there 15 minutes after it was submitted is stuck: it shows again, so it can be
+ * deleted.
+ */
+export function inTransit(node: XmlNode, now = Date.now()): boolean {
+	if (text(node.IsSubmitted) !== 'true' || text(node.IsDraft) !== 'true') return false;
+	const submitted = Date.parse(text(node.LastModifiedTime));
+	return Number.isNaN(submitted) || now - submitted < STUCK_MS;
 }
 
 /**
@@ -106,7 +116,8 @@ export function summaryOf(
 		date: isoDate(text(node.DateTimeReceived)),
 		unread: text(node.IsRead) === 'false',
 		starred: text(child(node, 'Flag')?.FlagStatus) === 'Flagged',
-		draft: text(node.IsDraft) === 'true',
+		// A submitted item is Exchange's to send; editing or sending it again would send it twice.
+		draft: text(node.IsDraft) === 'true' && text(node.IsSubmitted) !== 'true',
 		hasAttachments: text(node.HasAttachments) === 'true',
 		messageId: text(node.InternetMessageId) || null,
 		...('ConversationId' in node

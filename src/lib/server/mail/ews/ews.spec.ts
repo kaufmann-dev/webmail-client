@@ -183,6 +183,12 @@ describe('items', () => {
 		});
 	});
 
+	it('counts only unsubmitted drafts as drafts', () => {
+		expect(summaryOf('acc', 'Drafts', { ...node, IsDraft: 'true' }, 0).draft).toBe(true);
+		const submitted = { ...node, IsDraft: 'true', IsSubmitted: 'true' };
+		expect(summaryOf('acc', 'Drafts', submitted, 0).draft).toBe(false);
+	});
+
 	it('lists file and item attachments with URL-safe part IDs', () => {
 		const attachments = attachmentsOf(node);
 		expect(attachments.map((a) => [a.name, a.contentType, a.inline, a.contentId])).toEqual([
@@ -195,11 +201,19 @@ describe('items', () => {
 		expect(attachmentIdOf(partId)).toBe('att/1+');
 	});
 
-	it('recognizes items Exchange is still sending', () => {
-		expect(inTransit({ IsSubmitted: 'true', IsDraft: 'true' })).toBe(true);
-		expect(inTransit({ IsSubmitted: 'false', IsDraft: 'true' })).toBe(false);
-		expect(inTransit({ IsSubmitted: 'true', IsDraft: 'false' })).toBe(false);
-		expect(inTransit(node)).toBe(false);
+	it('recognizes items Exchange is still sending, until they are stuck', () => {
+		const now = Date.parse('2026-10-29T15:00:00Z');
+		const submitted = (at: string) => ({
+			IsSubmitted: 'true',
+			IsDraft: 'true',
+			LastModifiedTime: at
+		});
+		expect(inTransit(submitted('2026-10-29T14:59:00Z'), now)).toBe(true);
+		expect(inTransit({ IsSubmitted: 'true', IsDraft: 'true' }, now)).toBe(true);
+		expect(inTransit(submitted('2026-10-29T14:40:00Z'), now)).toBe(false);
+		expect(inTransit({ IsSubmitted: 'false', IsDraft: 'true' }, now)).toBe(false);
+		expect(inTransit({ IsSubmitted: 'true', IsDraft: 'false' }, now)).toBe(false);
+		expect(inTransit(node, now)).toBe(false);
 	});
 
 	it('pages by received time, counting messages that share a second', () => {

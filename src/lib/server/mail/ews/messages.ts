@@ -299,6 +299,7 @@ async function itemTypes(account: MailAccount, ids: string[]): Promise<(string |
 	return messages.map((message) => (failed(message) ? null : (firstItem(message)?.type ?? null)));
 }
 
+/** Updates the items that are still there, then reports any that are gone. */
 async function updateItems(
 	account: MailAccount,
 	ids: string[],
@@ -310,9 +311,16 @@ async function updateItems(
 		const changes = type ? fields(type) : [];
 		return type && changes.length ? [{ id, type, fields: changes }] : [];
 	});
-	if (!updates.length) return;
-	const messages = await ewsCall(account, request.updateItems(updates));
-	for (const message of messages) check(message);
+	if (updates.length) {
+		const messages = await ewsCall(account, request.updateItems(updates));
+		for (const message of messages) check(message);
+	}
+	const gone = types.filter((type) => type === null).length;
+	if (gone) {
+		throw new MessageGoneError(
+			gone === 1 ? undefined : `${gone} of these messages no longer exist.`
+		);
+	}
 }
 
 export function setFlags(

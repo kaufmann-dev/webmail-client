@@ -771,21 +771,27 @@ export async function setFlags(
 	flags: { seen?: boolean; flagged?: boolean }
 ): Promise<void> {
 	for (const group of groups) {
-		if (group.kind === 'ews') {
-			await ews.setFlags(group.account, group.itemIds, flags);
-		} else {
-			await inGroup(group, async (client) => {
-				for (const [flag, on] of [
-					['\\Seen', flags.seen],
-					['\\Flagged', flags.flagged]
-				] as const) {
-					if (on === undefined) continue;
-					const done = on
-						? await client.messageFlagsAdd(group.uids, [flag], { uid: true })
-						: await client.messageFlagsRemove(group.uids, [flag], { uid: true });
-					required(done, group.account, 'update the messages');
-				}
-			});
+		try {
+			if (group.kind === 'ews') {
+				await ews.setFlags(group.account, group.itemIds, flags);
+			} else {
+				await inGroup(group, async (client) => {
+					for (const [flag, on] of [
+						['\\Seen', flags.seen],
+						['\\Flagged', flags.flagged]
+					] as const) {
+						if (on === undefined) continue;
+						const done = on
+							? await client.messageFlagsAdd(group.uids, [flag], { uid: true })
+							: await client.messageFlagsRemove(group.uids, [flag], { uid: true });
+						required(done, group.account, 'update the messages');
+					}
+				});
+			}
+		} catch (error) {
+			// Some of the messages may have changed before the failure.
+			forgetGroup(group);
+			throw error;
 		}
 		for (const locator of groupLocators(group)) {
 			const key = encodeMessageRef(locator);
@@ -856,21 +862,25 @@ const GMAIL_MOVE_ROLES = ['inbox', 'spam', 'trash'] as const;
 /**
  * Moves messages; a no-op for messages already in the target folder. Archiving on Gmail outside
  * Inbox, Spam, and Trash removes the Inbox label instead (Gmail's archive), and the messages stay
- * where they are. Returns the new ref of each moved message by its old ref, as far as the server
- * reports them.
+ * where they are. Every destination is found before anything moves. `moved` collects the new ref
+ * of each moved message by its old ref, as far as the server reports them, as each group moves,
+ * so a caller keeps them when a later group fails.
  */
 export async function moveMessages(
 	groups: RefGroup[],
-	target: MoveTarget
+	target: MoveTarget,
+	moved = new Map<string, string>()
 ): Promise<Map<string, string>> {
-	const moved = new Map<string, string>();
+	const destinations: string[] = [];
 	for (const group of groups) {
-		const destination =
+		destinations.push(
 			target === 'archive'
 				? await ensureArchiveFolder(group.account)
-				: typeof target === 'string'
-					? await requireFolder(group.account, target)
-					: await requireFolder(group.account, target.path);
+				: await requireFolder(group.account, typeof target === 'string' ? target : target.path)
+		);
+	}
+	for (const [index, group] of groups.entries()) {
+		const destination = destinations[index];
 		if (destination === group.path) continue;
 		if (
 			target === 'archive' &&
@@ -1205,7 +1215,7 @@ export async function messagePreviews(
 /**
  * Finds a message by its Message-ID header after it moved without this app (in another mail
  * program, or by a server rule): its last folder first, then the other folders, Drafts and Sent
- * last. Null when it is in none of them.
+ * last. Null when it is in none of them; a folder that could not be searched fails the lookup.
  */
 export async function findMessage(
 	account: MailAccount,
@@ -1216,10 +1226,18 @@ export async function findMessage(
 	// Drafts and Sent last: the Sent copy of a message sent to oneself shares its Message-ID.
 	const late = (f: { role: string | null }) => f.role === 'drafts' || f.role === 'sent';
 	const others = [...folders.filter((f) => !late(f)), ...folders.filter(late)];
-	const paths = [lastPath, ...others.map((f) => f.path).filter((path) => path !== lastPath)];
+	// A deleted last folder is not searched; it would only fail.
+	const first = folders.some((f) => f.path === lastPath) ? [lastPath] : [];
+	const paths = [...first, ...others.map((f) => f.path).filter((path) => path !== lastPath)];
+	// A folder that could not be searched may hold it: then "not found" is not known.
+	let failure: unknown = null;
+	const remember = (error: unknown) => {
+		failure ??= error;
+		return null;
+	};
 	for (const path of paths) {
 		if (account.provider === 'exchange') {
-			const itemId = await ews.findByMessageId(account, path, messageId).catch(() => null);
+			const itemId = await ews.findByMessageId(account, path, messageId).catch(remember);
 			if (itemId) return encodeMessageRef({ kind: 'ews', accountId: account.id, path, itemId });
 			continue;
 		}
@@ -1228,8 +1246,9 @@ export async function findMessage(
 			return uids.length
 				? { uid: Math.max(...uids), uidValidity: String(mailbox.uidValidity) }
 				: null;
-		}).catch(() => null);
+		}).catch(remember);
 		if (found) return encodeMessageRef({ kind: 'imap', accountId: account.id, path, ...found });
 	}
+	if (failure) throw failure;
 	return null;
 }

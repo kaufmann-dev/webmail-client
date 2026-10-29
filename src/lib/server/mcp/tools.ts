@@ -1056,15 +1056,20 @@ export function createMcpServer(
 					case 'unstar':
 						await setFlags(groups, { flagged: action === 'star' });
 						break;
-					case 'move':
-						if (!folder) throw new MailError('"folder" is required for move.', 400);
-						await refs.moved(await moveMessages(groups, { path: folder }));
-						break;
-					case 'move_to_inbox':
-						await refs.moved(await moveMessages(groups, 'inbox'));
-						break;
-					default:
-						await refs.moved(await moveMessages(groups, action));
+					default: {
+						if (action === 'move' && !folder) {
+							throw new MailError('"folder" is required for move.', 400);
+						}
+						const target =
+							action === 'move' ? { path: folder! } : action === 'move_to_inbox' ? 'inbox' : action;
+						// Refs follow the messages that moved, even when a later part of the move fails.
+						const moved = new Map<string, string>();
+						try {
+							await moveMessages(groups, target, moved);
+						} finally {
+							await refs.moved(moved);
+						}
+					}
 				}
 				return { status: 'ok', updated: message_refs.length };
 			})

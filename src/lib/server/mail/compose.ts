@@ -179,6 +179,8 @@ export async function loadDraft(userId: string, ref: string): Promise<Draft> {
 	// Fresh: Exchange keeps a draft's item ID when another program edits it.
 	const read = await getMessage(account, locator, { fresh: true });
 	const { detail } = read;
+	// Sending anything else would send a received message again, from the user.
+	if (!detail.draft) throw new MailError('This message is not a draft.', 400);
 	const meeting = meetingOf(account, read);
 	if (meeting) {
 		return {
