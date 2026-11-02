@@ -26,6 +26,7 @@ import { MCP_RESOURCE } from '../auth';
 import { parseAddressList } from '../mail/addresses';
 import { attachmentText } from '../mail/attachment-text';
 import { findMeetingTimes } from '../mail/availability';
+import { getEvent, listEvents, type CalendarEvent } from '../mail/calendar';
 import { imageNumbers } from '../mail/body-text';
 import { groupConversations, type Conversation } from '../mail/conversations';
 import { errorMessage, MailError, MessageGoneError } from '../mail/errors';
@@ -58,6 +59,7 @@ import { textToComposeHtml } from '../mail/html-body';
 import { baseSubject, composeBody, formatAddress, looksLikeReplySubject } from '../mail/threading';
 import type { MailAccount } from '../mail/types';
 import { McpAccess, McpAccessError } from './access';
+import { EventRefs } from './event-refs';
 import { McpRefs } from './refs';
 import { MAX_UPLOAD_BYTES, transfers } from './transfers';
 import { formatWallClock, isTimeZone, parseWallClock, zonedToUtc } from '../mail/time-zones';
@@ -106,7 +108,12 @@ and the attendees and the times that suit everyone. create_meeting invites atten
 other sending tools it saves a draft unless the user asked to send. Exchange puts sent meetings in
 the user's calendar; other accounts send the invitation by email only, so the user adds the
 meeting to their own calendar. update_meeting and cancel_meeting change or cancel a meeting the
-user sent, given the invitation in Sent Items; they notify the affected attendees immediately.`;
+user sent, given the invitation in Sent Items; they notify the affected attendees immediately.
+
+Calendar (Exchange accounts only): list_events lists the events between two days; get_event
+returns one with its attendees and, for meetings the user organizes, each attendee's current
+answer and when they replied. Use get_event to see who accepted, not the reply mails or the
+invitations in Sent Items, which show every attendee as needs-action.`;
 
 function json(value: unknown): CallToolResult {
 	return { content: [{ type: 'text', text: JSON.stringify(value) }] };
@@ -150,6 +157,8 @@ function flagsOut(message: MessageSummary) {
 }
 
 function invitationOut(invitation: Invitation) {
+	// Own invitations record every attendee as needs-action, as sent; get_event has the answers.
+	const statuses = !invitation.organizedByYou || invitation.method === 'reply';
 	return {
 		method: invitation.method,
 		title: invitation.title,
@@ -161,7 +170,33 @@ function invitationOut(invitation: Invitation) {
 		recurring: invitation.recurring,
 		your_status: invitation.ownStatus,
 		...(invitation.organizedByYou && { organized_by_you: true }),
-		attendees: invitation.attendees.map((a) => ({ address: formatAddress(a), status: a.status }))
+		attendees: invitation.attendees.map((a) => ({
+			address: formatAddress(a),
+			...(statuses && { status: a.status })
+		}))
+	};
+}
+
+/** An event's times in a zone: wall clock, or dates (end exclusive) for all-day events. */
+function eventTimes(event: CalendarEvent, timeZone: string) {
+	const local = (iso: string) => formatWallClock(Date.parse(iso), timeZone);
+	return event.allDay
+		? { start: local(event.start).slice(0, 10), end: local(event.end).slice(0, 10), all_day: true }
+		: { start: local(event.start), end: local(event.end) };
+}
+
+function eventOut(event: CalendarEvent, eventRef: string, timeZone: string) {
+	return {
+		event_ref: eventRef,
+		title: event.title,
+		...eventTimes(event, timeZone),
+		...(event.location && { location: event.location }),
+		...(event.organizer && { organizer: formatAddress(event.organizer) }),
+		...(event.organizedByYou && { organized_by_you: true }),
+		...(event.ownStatus && { your_status: event.ownStatus }),
+		...(event.recurring && { recurring: true }),
+		...(event.canceled && { canceled: true }),
+		...(event.showAs !== 'busy' && { show_as: event.showAs })
 	};
 }
 
@@ -278,7 +313,8 @@ export function createMcpServer(
 	userId: string,
 	clientId: string,
 	access: McpAccess,
-	refs: McpRefs = new McpRefs(userId)
+	refs: McpRefs = new McpRefs(userId),
+	eventRefs: EventRefs = new EventRefs(userId)
 ): McpServer {
 	const server = new McpServer(
 		{ name: 'webmail', version: '1.0.0' },
@@ -1478,6 +1514,111 @@ export function createMcpServer(
 							])
 					),
 					...(unknown.length && { unknown })
+				};
+			})
+	);
+
+	server.registerTool(
+		'list_events',
+		{
+			title: 'List calendar events',
+			description:
+				"Exchange accounts only. Lists the events in the user's calendar on the days from date_from to " +
+				'date_to, in order of start; recurring meetings appear as single occurrences. query keeps events ' +
+				'whose title, location, or organizer contains it. Times are in time_zone; all-day events have ' +
+				'dates, with an exclusive end. get_event returns the attendees and, for meetings the user ' +
+				'organizes, their current answers. next_from means more events follow: call again from that ' +
+				'day (events already listed may repeat).',
+			inputSchema: z.object({
+				account: accountRef,
+				date_from: date,
+				date_to: date.describe('Last day, inclusive; the span covers at most 92 days.'),
+				time_zone: timeZone,
+				query: z
+					.string()
+					.trim()
+					.min(1)
+					.optional()
+					.describe('Text to find in the title, location, or organizer, ignoring case.')
+			}),
+			annotations: { readOnlyHint: true }
+		},
+		({ account: accountArg, date_from, date_to, time_zone, query }) =>
+			guard(async () => {
+				const grant = access.grant(accountArg, 'read');
+				const { events, complete } = await listEvents(grant.account, {
+					from: date_from,
+					to: date_to,
+					timeZone: time_zone,
+					notBefore: access.cutoff(grant)
+				});
+				const needle = query?.toLowerCase();
+				const matching = needle
+					? events.filter((event) =>
+							[event.title, event.location, event.organizer && formatAddress(event.organizer)].some(
+								(value) => value?.toLowerCase().includes(needle)
+							)
+						)
+					: events;
+				const short = await eventRefs.shorten(
+					grant.account.id,
+					matching.map((event) => event.id)
+				);
+				const last = events[events.length - 1];
+				return {
+					time_zone,
+					events: matching.map((event) => eventOut(event, short.get(event.id)!, time_zone)),
+					...(!complete &&
+						last && { next_from: formatWallClock(Date.parse(last.start), time_zone).slice(0, 10) })
+				};
+			})
+	);
+
+	server.registerTool(
+		'get_event',
+		{
+			title: 'Get calendar event',
+			description:
+				'Returns one event from list_events with its description and attendees (required unless role ' +
+				'says optional or resource). For meetings the user organizes, each attendee has their current ' +
+				'answer as Exchange recorded it (accepted, tentative, declined, or needs-action) and replied_at, ' +
+				'and responses counts the answers of people; attendees who answered without sending a reply ' +
+				'stay needs-action. For meetings the user is invited to, only your_status is known.',
+			inputSchema: z.object({
+				event_ref: z.string().min(1).describe('An event_ref from list_events.'),
+				time_zone: timeZone
+			}),
+			annotations: { readOnlyHint: true }
+		},
+		({ event_ref, time_zone }) =>
+			guard(async () => {
+				const row = await eventRefs.resolve(event_ref);
+				const grant = access.grant(row.accountId, 'read');
+				const event = await getEvent(grant.account, row.itemId);
+				access.assertInWindow(grant, event.start, 'events');
+				const responses = { accepted: 0, tentative: 0, declined: 0, 'needs-action': 0 };
+				for (const attendee of event.attendees) {
+					if (attendee.role === 'resource' || !attendee.status) continue;
+					if (attendee.status in responses) responses[attendee.status as keyof typeof responses]++;
+				}
+				const truncated = event.description.length > MAX_THREAD_BODY_CHARS;
+				return {
+					...eventOut(event, event_ref.trim(), time_zone),
+					attendees: event.attendees.map((attendee) => ({
+						address: formatAddress(attendee),
+						...(attendee.role !== 'required' && { role: attendee.role }),
+						...(attendee.status && { status: attendee.status }),
+						...(attendee.repliedAt && {
+							replied_at: formatWallClock(Date.parse(attendee.repliedAt), time_zone)
+						})
+					})),
+					...(event.organizedByYou && { responses }),
+					...(event.description && {
+						description: truncated
+							? event.description.slice(0, MAX_THREAD_BODY_CHARS)
+							: event.description
+					}),
+					...(truncated && { description_truncated: true })
 				};
 			})
 	);

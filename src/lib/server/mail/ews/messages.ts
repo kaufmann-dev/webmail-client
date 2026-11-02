@@ -48,7 +48,7 @@ const RESOLVE_BATCH = 5;
  * Replaces X.500 addresses (routing type EX) with SMTP addresses where Exchange resolves them.
  * Only answers are remembered; a failed lookup is tried again next time.
  */
-async function resolveAddresses(
+export async function resolveAddresses(
 	account: MailAccount,
 	addresses: (Address | null)[]
 ): Promise<void> {

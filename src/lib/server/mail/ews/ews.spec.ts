@@ -2,7 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { MessageGoneError } from '../errors';
 import { decodeMessageRef } from '../message-ref';
 import { check, failed, operationResponse, responseMessages } from './client';
-import { availabilityOf, globalObjectIdOf, organizedMeetingOf } from './calendar';
+import {
+	availabilityOf,
+	eventDetailOf,
+	eventOf,
+	globalObjectIdOf,
+	organizedMeetingOf
+} from './calendar';
 import { buildFolders } from './folders';
 import {
 	attachmentIdOf,
@@ -486,5 +492,170 @@ describe('meetings', () => {
 		expect(request.calendarView('2026-11-02T09:00:00.000Z', '2026-11-02T12:00:00.000Z')).toContain(
 			'<m:CalendarView MaxEntriesReturned="50" StartDate="2026-11-02T09:00:00.000Z"'
 		);
+	});
+});
+
+describe('events', () => {
+	const item = (xml: string) =>
+		firstItem(
+			responseMessages(
+				soap(
+					'<m:GetItemResponse><m:ResponseMessages><m:GetItemResponseMessage ResponseClass="Success">' +
+						`<m:Items><t:CalendarItem>${xml}</t:CalendarItem></m:Items>` +
+						'</m:GetItemResponseMessage></m:ResponseMessages></m:GetItemResponse>'
+				)
+			)[0]
+		)!.node;
+	const times = '<t:Start>2026-11-12T08:00:00Z</t:Start><t:End>2026-11-12T11:00:00Z</t:End>';
+	const attendee = (address: string, response: string, at = '') =>
+		`<t:Attendee><t:Mailbox><t:EmailAddress>${address}</t:EmailAddress></t:Mailbox>` +
+		`<t:ResponseType>${response}</t:ResponseType>` +
+		(at ? `<t:LastResponseTime>${at}</t:LastResponseTime>` : '') +
+		'</t:Attendee>';
+
+	it('maps meetings the user organizes, is invited to, and appointments', () => {
+		const organized = eventOf(
+			'acc',
+			item(
+				'<t:ItemId Id="E1" ChangeKey="K"/><t:Subject>Schulung</t:Subject>' +
+					times +
+					'<t:Location>Raum 3</t:Location><t:IsMeeting>true</t:IsMeeting>' +
+					'<t:MyResponseType>Organizer</t:MyResponseType><t:CalendarItemType>Single</t:CalendarItemType>' +
+					'<t:LegacyFreeBusyStatus>Busy</t:LegacyFreeBusyStatus>'
+			)
+		);
+		expect(organized).toEqual({
+			id: 'E1',
+			accountId: 'acc',
+			title: 'Schulung',
+			start: '2026-11-12T08:00:00.000Z',
+			end: '2026-11-12T11:00:00.000Z',
+			allDay: false,
+			location: 'Raum 3',
+			organizer: null,
+			organizedByYou: true,
+			ownStatus: null,
+			recurring: false,
+			canceled: false,
+			showAs: 'busy'
+		});
+		const invited = eventOf(
+			'acc',
+			item(
+				'<t:ItemId Id="E2"/><t:Subject>Jour fixe</t:Subject>' +
+					times +
+					'<t:Organizer><t:Mailbox><t:Name>Anna</t:Name><t:EmailAddress>anna@example.org</t:EmailAddress></t:Mailbox></t:Organizer>' +
+					'<t:IsMeeting>true</t:IsMeeting><t:MyResponseType>Tentative</t:MyResponseType>' +
+					'<t:CalendarItemType>Occurrence</t:CalendarItemType><t:LegacyFreeBusyStatus>Tentative</t:LegacyFreeBusyStatus>'
+			)
+		);
+		expect(invited).toMatchObject({
+			organizer: { name: 'Anna', address: 'anna@example.org' },
+			organizedByYou: false,
+			ownStatus: 'tentative',
+			recurring: true,
+			showAs: 'tentative'
+		});
+		const unanswered = eventOf(
+			'acc',
+			item(
+				'<t:ItemId Id="E3"/>' +
+					times +
+					'<t:IsAllDayEvent>true</t:IsAllDayEvent><t:IsMeeting>true</t:IsMeeting>' +
+					'<t:MyResponseType>NoResponseReceived</t:MyResponseType><t:IsCancelled>true</t:IsCancelled>'
+			)
+		);
+		expect(unanswered).toMatchObject({ allDay: true, ownStatus: 'needs-action', canceled: true });
+		const appointment = eventOf(
+			'acc',
+			item(
+				'<t:ItemId Id="E4"/>' +
+					times +
+					'<t:IsMeeting>false</t:IsMeeting><t:MyResponseType>Organizer</t:MyResponseType>' +
+					'<t:LegacyFreeBusyStatus>OOF</t:LegacyFreeBusyStatus>'
+			)
+		);
+		expect(appointment).toMatchObject({
+			organizer: null,
+			organizedByYou: false,
+			ownStatus: null,
+			showAs: 'away'
+		});
+	});
+
+	it('lists the answers of attendees only on meetings the user organizes', () => {
+		const lists =
+			'<t:RequiredAttendees>' +
+			attendee('me@example.org', 'Organizer') +
+			attendee('alex@example.org', 'Accept', '2026-11-03T10:15:00Z') +
+			attendee('kim@example.org', 'NoResponseReceived') +
+			'</t:RequiredAttendees><t:OptionalAttendees>' +
+			attendee('lea@example.org', 'Decline', '2026-11-04T07:00:00Z') +
+			'</t:OptionalAttendees><t:Resources>' +
+			attendee('raum3@example.org', 'Accept', '2026-11-02T09:00:00Z') +
+			'</t:Resources>';
+		const organized = eventDetailOf(
+			'acc',
+			item(
+				'<t:ItemId Id="E1"/><t:Subject>Schulung</t:Subject>' +
+					'<t:Body BodyType="HTML">&lt;p&gt;Agenda &amp;amp; Ablauf&lt;/p&gt;</t:Body>' +
+					times +
+					'<t:IsMeeting>true</t:IsMeeting><t:MyResponseType>Organizer</t:MyResponseType>' +
+					lists
+			)
+		);
+		expect(organized.description).toBe('Agenda & Ablauf');
+		expect(organized.attendees).toEqual([
+			{
+				name: '',
+				address: 'alex@example.org',
+				role: 'required',
+				status: 'accepted',
+				repliedAt: '2026-11-03T10:15:00.000Z'
+			},
+			{
+				name: '',
+				address: 'kim@example.org',
+				role: 'required',
+				status: 'needs-action',
+				repliedAt: null
+			},
+			{
+				name: '',
+				address: 'lea@example.org',
+				role: 'optional',
+				status: 'declined',
+				repliedAt: '2026-11-04T07:00:00.000Z'
+			},
+			{
+				name: '',
+				address: 'raum3@example.org',
+				role: 'resource',
+				status: 'accepted',
+				repliedAt: '2026-11-02T09:00:00.000Z'
+			}
+		]);
+		const invited = eventDetailOf(
+			'acc',
+			item(
+				'<t:ItemId Id="E2"/>' +
+					times +
+					'<t:IsMeeting>true</t:IsMeeting><t:MyResponseType>Accept</t:MyResponseType>' +
+					lists
+			)
+		);
+		expect(invited.attendees.map((a) => [a.address, a.status, a.repliedAt])).toEqual([
+			['alex@example.org', null, null],
+			['kim@example.org', null, null],
+			['lea@example.org', null, null],
+			['raum3@example.org', null, null]
+		]);
+		expect(invited.description).toBe('');
+	});
+
+	it('asks the calendar view for the given number of entries', () => {
+		expect(
+			request.calendarView('2026-11-02T00:00:00.000Z', '2026-12-01T00:00:00.000Z', 250)
+		).toContain('<m:CalendarView MaxEntriesReturned="250" StartDate="2026-11-02T00:00:00.000Z"');
 	});
 });

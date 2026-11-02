@@ -32,6 +32,29 @@ export const DETAIL_FIELDS = [
 	'item:Body'
 ];
 
+/** A calendar event as listed. */
+export const EVENT_FIELDS = [
+	'item:Subject',
+	'calendar:Start',
+	'calendar:End',
+	'calendar:IsAllDayEvent',
+	'calendar:Location',
+	'calendar:Organizer',
+	'calendar:IsMeeting',
+	'calendar:MyResponseType',
+	'calendar:IsCancelled',
+	'calendar:CalendarItemType',
+	'calendar:LegacyFreeBusyStatus'
+];
+
+/** A calendar event with its attendees and their answers (as the organizer's item records them). */
+export const EVENT_DETAIL_FIELDS = [
+	...EVENT_FIELDS,
+	'calendar:RequiredAttendees',
+	'calendar:OptionalAttendees',
+	'calendar:Resources'
+];
+
 /** Summary fields plus the conversation a message belongs to. */
 export const THREAD_FIELDS = [...SUMMARY_FIELDS, 'item:ConversationId'];
 
@@ -419,11 +442,11 @@ export function createMeeting(meeting: MeetingItem): string {
 	);
 }
 
-/** The calendar items overlapping a time span, at most 50 (a view returns no more). */
-export function calendarView(start: string, end: string): string {
+/** The calendar items overlapping a time span, in order of start, at most `max` of them. */
+export function calendarView(start: string, end: string, max = 50): string {
 	return (
 		'<m:FindItem Traversal="Shallow"><m:ItemShape><t:BaseShape>IdOnly</t:BaseShape></m:ItemShape>' +
-		`<m:CalendarView MaxEntriesReturned="50" StartDate="${escapeXml(start)}" EndDate="${escapeXml(end)}"/>` +
+		`<m:CalendarView MaxEntriesReturned="${max}" StartDate="${escapeXml(start)}" EndDate="${escapeXml(end)}"/>` +
 		'<m:ParentFolderIds><t:DistinguishedFolderId Id="calendar"/></m:ParentFolderIds></m:FindItem>'
 	);
 }

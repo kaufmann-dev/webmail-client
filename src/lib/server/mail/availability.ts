@@ -25,7 +25,8 @@ const DAY = 24 * 60 * MINUTE;
 const MAX_DAYS = 14;
 const MAX_ATTENDEES = 20;
 
-function day(value: string): WallClock {
+/** A `YYYY-MM-DD` date as a wall-clock midnight. */
+export function day(value: string): WallClock {
 	const time = parseWallClock(value);
 	if (!time || value.length !== 10) throw new MailError(`Not a date: ${value}`, 400);
 	return time;

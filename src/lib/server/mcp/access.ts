@@ -114,10 +114,11 @@ export class McpAccess {
 		return !cutoff || Date.parse(date) >= cutoff.getTime();
 	}
 
-	private assertInWindow(grant: Grant, date: string): void {
+	/** Refuses a message received, or an event starting, before the grant's time window. */
+	assertInWindow(grant: Grant, date: string, what: 'messages' | 'events' = 'messages'): void {
 		if (this.inWindow(grant, date)) return;
 		throw new McpAccessError(
-			`${grant.account.email} only allows this connection to access messages from the last ` +
+			`${grant.account.email} only allows this connection to access ${what} from the last ` +
 				`${grant.maxAgeDays} days. ${SETTINGS_HINT}`
 		);
 	}

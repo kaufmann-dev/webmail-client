@@ -130,7 +130,8 @@ shows these steps with copyable commands for the deployed URL.
   drafts, folders), or **Full** (also sending).
 - **Limits:** per account, an app can also be held to messages received in the last 7, 30, or 90
   days, and attachments can be withheld. Older messages then do not appear in lists, searches, or
-  conversations, and every tool refuses them. Without attachments, `get_message` leaves out the
+  conversations, and every tool refuses them; calendar events count by their start, so earlier
+  ones are hidden and later ones stay visible. Without attachments, `get_message` leaves out the
   attachment and embedded-image lists, `get_attachment` and its download links are refused, `forward_message` only
   forwards without attachments, and files of other messages cannot be attached. The server enforces
   both on every tool call.
@@ -147,6 +148,10 @@ shows these steps with copyable commands for the deployed URL.
   `update_meeting` and `cancel_meeting` change or cancel a meeting the user sent (changing only
   the attendees notifies only those added or removed), and
   `find_meeting_times` finds times that suit everyone on Exchange accounts.
+- **Calendar:** on Exchange accounts, `list_events` lists the events between two days (up to 92),
+  and `get_event` returns an event's attendees. For meetings the user organizes, that includes
+  each attendee's current answer and when they replied, as Exchange recorded it. The copies of
+  invitations in Sent Items show everyone as unanswered, so `get_message` leaves their status out.
 - **Changing access:** Settings → Connected apps edits these choices at any time. Changes take effect
   on the app's next request. Revoking an app deletes its consent, grants, and refresh tokens.
 - **Tokens:** access tokens are 15-minute JWTs bound to `/mcp`, with rotating refresh tokens. The
@@ -178,6 +183,8 @@ shows these steps with copyable commands for the deployed URL.
 | `send_draft`               | Full             | Send a draft from the Drafts folder                                                            |
 | `respond_to_invitation`    | Full             | Accept, tentatively accept, or decline an invitation; sends immediately                        |
 | `find_meeting_times`       | Read             | Busy times and times that suit everyone (Exchange only)                                        |
+| `list_events`              | Read             | Events between two days, optionally matching a text (Exchange only)                            |
+| `get_event`                | Read             | An event's attendees and, for your meetings, their current answers                             |
 | `create_meeting`           | Organize or Full | Invite attendees to a new meeting; `mode` is `draft` (default) or `send`                       |
 | `update_meeting`           | Full             | Change a sent meeting; sends immediately, attendee-only changes to those affected              |
 | `cancel_meeting`           | Full             | Cancel a sent meeting; sends immediately                                                       |

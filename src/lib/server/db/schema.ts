@@ -109,6 +109,27 @@ export const mcpMessageRef = pgTable(
 );
 
 /**
+ * Short MCP event refs for Exchange calendar items, kept apart from message refs: events have no
+ * folder path or Message-ID to follow. Only identifiers are stored, never calendar content.
+ */
+export const mcpEventRef = pgTable(
+	'mcp_event_ref',
+	{
+		id: text('id').primaryKey(),
+		userId: text('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		accountId: text('account_id')
+			.notNull()
+			.references(() => mailAccount.id, { onDelete: 'cascade' }),
+		/** The EWS item ID; for recurring meetings, the occurrence's ID from the calendar view. */
+		itemId: text('item_id').notNull(),
+		createdAt: timestamp('created_at').defaultNow().notNull()
+	},
+	(table) => [unique('mcp_event_ref_item_uq').on(table.userId, table.accountId, table.itemId)]
+);
+
+/**
  * The user's answers to invitations, by iCalendar UID: the invitation's own calendar part keeps
  * asking for an answer. Holds identifiers and the answer only, never mail content.
  */

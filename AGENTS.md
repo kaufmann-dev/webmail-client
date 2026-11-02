@@ -56,7 +56,9 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
     `GetUserAvailability`, which `ewsOperation` calls because it has no response messages and
     which needs a UTC zone with two distinct transitions; sent meetings found by UID wherever they
     moved, through `PidLidCleanGlobalObjectId`, since Exchange's UIDs are that ID in hex, or in a
-    calendar view of their time for UIDs Exchange did not create). Lists page by received time (`timeCursors` in `items.ts`, so moving or
+    calendar view of their time for UIDs Exchange did not create; events through `listEvents`, a
+    calendar view of IDs then `GetItem`, and `getEvent`, whose attendee answers and reply times
+    come only from items the user organizes). Lists page by received time (`timeCursors` in `items.ts`, so moving or
     flagging listed messages shifts no page; text searches page by position) and, like
     conversations, skip items Exchange is still sending (a sent meeting's invitation passes
     through Drafts), for up to 15 minutes after they were submitted; later they show again, as
@@ -119,6 +121,8 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
   - `availability.ts`: free times for a meeting (`freeTimes`, pure: weekdays, working hours,
     tentative counts as busy) from Exchange free/busy; served to the compose form by
     `/api/availability` and to MCP by `find_meeting_times`. Exchange only.
+  - `calendar.ts`: calendar events for MCP `list_events` and `get_event` (at most 92 days, from a
+    time window's start on). Exchange only; IMAP accounts have no calendar.
 - Reply and forward headers (`In-Reply-To`, `References`, subject prefixes, recipients) are built
   only by `prepareReply` / `prepareForward` in `compose.ts`, using `threading.ts`. Never accept them
   from MCP input.
@@ -136,7 +140,7 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
   never takes over a message that has its own ref (`McpRefs.followed`), and refs of messages that
   are gone lose their Message-ID (`McpRefs.gone`), so they fail at once instead of searching
   every folder again. `loadDraft` (editing and `send_draft`) refuses messages that are not drafts.
-- Mail is never stored in the database (`mcp_message_ref` holds identifiers only;
+- Mail is never stored in the database (`mcp_message_ref` and `mcp_event_ref` hold identifiers only;
   `invitation_response` holds the user's answer per invitation UID and SEQUENCE, which reading
   applies as `Invitation.ownStatus`, since the invitation's own calendar part never records it;
   `sent_meeting` holds the UID, SEQUENCE, and Message-ID of the newest version of meetings changed
@@ -177,6 +181,11 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
     body; `get_thread` lists none.
   - `create_meeting` needs `organize` for drafts and `send` to send, like `compose_new_message`;
     `find_meeting_times` needs `read`. `update_meeting` and `cancel_meeting` need `send`.
+  - `list_events` and `get_event` need `read`; the time window applies by event start
+    (`access.cutoff`, `assertInWindow`). Events get 10-character refs in `mcp_event_ref`
+    (`mcp/event-refs.ts`), apart from message refs, so no message tool accepts them and folder
+    moves never touch them. `get_message` leaves the attendee status out of invitations the user
+    organizes, since their sent copies record everyone as needs-action.
   - Folder tools need `organize`. `delete_folder` deletes only empty folders, since a full delete
     would also destroy messages outside the time window. `rename_folder` and `move_folder` rewrite
     the short refs of messages in the changed subtree (`McpRefs.folderMoved`).

@@ -91,8 +91,8 @@
 	<div>
 		<dt class="inline font-medium">Limits:</dt>
 		<dd class="inline">
-			Older messages, and attachments when not allowed, stay hidden from the app, even when it
-			reads, replies to, or forwards a message.
+			Older messages and events, and attachments when not allowed, stay hidden from the app, even
+			when it reads, replies to, or forwards a message.
 		</dd>
 	</div>
 </dl>
