@@ -854,11 +854,14 @@ export function createMcpServer(
 				const { detail } = read;
 				const body = bodyOut(read, include_quoted, MAX_BODY_CHARS);
 				const images = grant.allowAttachments ? imagesOut(body.body, read.images) : [];
+				// Images that stay files (not loaded, over the size limit, or attached) are listed once.
+				const imageParts = new Set(images.map((image) => image.part_id));
+				const files = detail.attachments.filter((a) => !imageParts.has(a.partId));
 				// File names can be sensitive too, so a grant without attachments hides the lists.
 				const attachments = grant.allowAttachments
 					? {
-							...(detail.attachments.length && {
-								attachments: detail.attachments.map((a) => ({
+							...(files.length && {
+								attachments: files.map((a) => ({
 									part_id: a.partId,
 									filename: a.filename,
 									content_type: a.contentType,
