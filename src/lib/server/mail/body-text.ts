@@ -3,8 +3,8 @@ import type { BlockTextBuilder, TablePrinterCell } from 'html-to-text/lib/block-
 
 /**
  * Message bodies as clean plain text for AI clients: HTML converted with decoded entities,
- * Markdown tables, and `[image: name]` for embedded images, plus the new text of a reply without
- * the quoted conversation below it.
+ * Markdown tables, and `[image N: name]` for embedded images (numbered in order of appearance),
+ * plus the new text of a reply without the quoted conversation below it.
  */
 
 export interface BodyText {
@@ -12,6 +12,8 @@ export interface BodyText {
 	text: string;
 	/** The body above the first quoted message, or null when nothing is quoted. */
 	newText: string | null;
+	/** Content-IDs of the embedded images numbered in `text`: `[image N: …]` is at index N-1. */
+	images: string[];
 }
 
 /** Marks where a quoted message starts in converted HTML; private use, never in real text. */
@@ -122,11 +124,16 @@ const formatTable: FormatCallback = (elem, walk, builder) => {
 };
 
 interface Metadata {
-	/** File names of embedded images by Content-ID (without angle brackets). */
+	/** Names of the message's embedded images by Content-ID (without angle brackets). */
 	images: Map<string, string>;
+	/** Content-IDs of the images numbered so far, in order of first appearance. */
+	numbered: string[];
 }
 
-/** Embedded images by file name; remote images only by their alt text, tracking pixels not at all. */
+/**
+ * Embedded images of the message as `[image N: name]`, numbered so clients can fetch them; other
+ * `cid:` and `data:` images by name, remote images only by their alt text, tracking pixels not at all.
+ */
 const formatImage: FormatCallback = (elem, _walk, builder) => {
 	const src: string = elem.attribs?.src ?? '';
 	const alt = String(elem.attribs?.alt ?? '').trim();
@@ -134,12 +141,24 @@ const formatImage: FormatCallback = (elem, _walk, builder) => {
 	let name = alt;
 	if (/^cid:/i.test(src)) {
 		const cid = src.slice(4);
-		name = metadata?.images.get(cid) ?? (cid.split('@')[0] || alt);
+		const known = metadata?.images.get(cid);
+		if (metadata && known) {
+			if (!metadata.numbered.includes(cid)) metadata.numbered.push(cid);
+			const number = metadata.numbered.indexOf(cid) + 1;
+			builder.addInline(`[image ${number}: ${known}]`, { noWordTransform: true });
+			return;
+		}
+		name = cid.split('@')[0] || alt;
 	} else if (/^data:/i.test(src)) {
 		name = alt || 'image';
 	}
 	if (name) builder.addInline(`[image: ${name}]`, { noWordTransform: true });
 };
+
+/** The numbers of the embedded images whose `[image N: …]` appears in a text. */
+export function imageNumbers(text: string): Set<number> {
+	return new Set([...text.matchAll(/\[image (\d+): /g)].map((match) => Number(match[1])));
+}
 
 /** The start of a quoted message: marked, then formatted as a block or `> ` quote. */
 const formatQuote: FormatCallback = (elem, walk, builder, options) => {
@@ -202,8 +221,10 @@ export function normalizeText(text: string): string {
  * HTML as plain text; quoted messages are marked with `QUOTE_MARK`. Entities are decoded once,
  * so text a sender encoded twice reads as mail programs show it.
  */
-function htmlText(html: string, images: Map<string, string>): string {
-	return convertHtml(html, { images }).replace(/([^\s[\]]+@[^\s[\]]+) \[mailto:\1\]/g, '$1');
+function htmlText(html: string, images: Map<string, string>): { text: string; images: string[] } {
+	const metadata: Metadata = { images, numbered: [] };
+	const text = convertHtml(html, metadata).replace(/([^\s[\]]+@[^\s[\]]+) \[mailto:\1\]/g, '$1');
+	return { text, images: metadata.numbered };
 }
 
 const SEPARATOR = String.raw`-{2,}\s*(?:Original Message|Ursprüngliche Nachricht|Originalnachricht|Original-Nachricht|Message d'origine|Messaggio originale|Mensaje original)\s*-{2,}`;
@@ -297,18 +318,25 @@ export function bodyText(input: {
 	html: string | null;
 	text: string;
 	subject: string;
-	/** File names of embedded images by Content-ID. */
+	/** Names of the message's embedded images by Content-ID; only these are numbered. */
 	images?: Map<string, string>;
 }): BodyText {
 	const html = input.html ?? (looksLikeHtml(input.text) ? input.text : null);
-	const raw = html ? htmlText(html, input.images ?? new Map()) : input.text;
+	const converted = html
+		? htmlText(html, input.images ?? new Map())
+		: { text: input.text, images: [] };
+	const raw = converted.text;
 	const text = normalizeText(raw.replaceAll(QUOTE_MARK, ''));
-	if (isForwardSubject(input.subject)) return { text, newText: null };
+	if (isForwardSubject(input.subject)) return { text, newText: null, images: converted.images };
 	const mark = raw.indexOf(QUOTE_MARK);
 	const head = normalizeText(mark >= 0 ? raw.slice(0, mark) : raw);
 	const index = quoteIndex(head);
 	const newText = index >= 0 ? above(head, index) : head;
-	return { text, newText: newText.length < text.length ? newText : null };
+	return {
+		text,
+		newText: newText.length < text.length ? newText : null,
+		images: converted.images
+	};
 }
 
 export const PREVIEW_CHARS = 200;
@@ -316,7 +344,7 @@ export const PREVIEW_CHARS = 200;
 /** One line of at most `PREVIEW_CHARS` characters, without image and link targets. */
 export function previewLine(text: string): string {
 	const line = text
-		.replace(/\[image: [^\]]*\]/g, ' ')
+		.replace(/\[image(?: \d+)?: [^\]]*\]/g, ' ')
 		.replace(/\s?\[(?:https?|mailto):[^\]\s]*\]/g, '')
 		.replace(/\s+/g, ' ')
 		.trim();

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	bodyText,
+	imageNumbers,
 	markdownTable,
 	normalizeText,
 	previewOf,
@@ -104,7 +105,7 @@ describe('bodyText', () => {
 				'| Montag | A 1.04 |',
 				'| Dienstag | B \\| 2 |',
 				'',
-				'Plan: [image: raumplan.png]',
+				'Plan: [image 1: raumplan.png]',
 				'',
 				'Fragen an office@example.com <bitte bis Freitag>.'
 			].join('\n')
@@ -125,6 +126,34 @@ describe('bodyText', () => {
 			subject: ''
 		});
 		expect(body.text).toBe('[image: image001.jpg]');
+		expect(body.images).toEqual([]);
+	});
+
+	it('numbers the embedded images in order of appearance', () => {
+		const html =
+			'<p>Grundriss: <img src="cid:plan@x"> und Foto: <img src="cid:foto@x"></p>' +
+			'<p><img src="cid:unknown@x"><img src="https://example.org/a.png" alt="Banner"></p>' +
+			'<p>Logo <img src="cid:logo@x"></p>' +
+			'<blockquote>Alter Plan: <img src="cid:plan@x"> <img src="cid:alt@x"></blockquote>';
+		const body = bodyText({
+			html,
+			text: '',
+			subject: 'Re: Plan',
+			images: new Map([
+				['plan@x', 'image.png'],
+				['foto@x', 'image.png'],
+				['logo@x', 'logo.png'],
+				['alt@x', 'alt.png']
+			])
+		});
+		expect(body.images).toEqual(['plan@x', 'foto@x', 'logo@x', 'alt@x']);
+		expect(body.newText).toBe(
+			'Grundriss: [image 1: image.png] und Foto: [image 2: image.png]\n\n' +
+				'[image: unknown][image: Banner]\n\nLogo [image 3: logo.png]'
+		);
+		expect(body.text).toContain('> Alter Plan: [image 1: image.png] [image 4: alt.png]');
+		expect(imageNumbers(body.newText!)).toEqual(new Set([1, 2, 3]));
+		expect(imageNumbers(body.text)).toEqual(new Set([1, 2, 3, 4]));
 	});
 
 	it('flattens layout tables instead of making Markdown of them', () => {
@@ -147,7 +176,8 @@ describe('bodyText', () => {
 			'Ja, gerne.\r\n\r\n\r\n\r\nAm 12.10.2026 um 09:14 schrieb Anna Berger <anna@example.com>:\r\n> Kommst du?\r\n>\r\n> Anna\r\n';
 		expect(bodyText({ html: null, text: reply, subject: 'Re: Treffen' })).toEqual({
 			text: 'Ja, gerne.\n\nAm 12.10.2026 um 09:14 schrieb Anna Berger <anna@example.com>:\n> Kommst du?\n>\n> Anna',
-			newText: 'Ja, gerne.'
+			newText: 'Ja, gerne.',
+			images: []
 		});
 		const inline = '> Kommst du?\nJa.\n> Um 10?\nPasst.';
 		expect(bodyText({ html: null, text: inline, subject: 'Re: Treffen' }).newText).toBeNull();
@@ -185,8 +215,13 @@ describe('previews', () => {
 		);
 	});
 
+	it('leaves out images', () => {
+		const text = 'Siehe [image 1: plan.png] und [image: Banner] hier';
+		expect(previewOf({ text, newText: null, images: [] })).toBe('Siehe und hier');
+	});
+
 	it('cuts long text at 200 characters with an ellipsis', () => {
-		const preview = previewOf({ text: 'Wort '.repeat(100), newText: null });
+		const preview = previewOf({ text: 'Wort '.repeat(100), newText: null, images: [] });
 		expect(preview.length).toBeLessThanOrEqual(200);
 		expect(preview.endsWith('…')).toBe(true);
 	});

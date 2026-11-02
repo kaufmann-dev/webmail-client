@@ -131,11 +131,12 @@ shows these steps with copyable commands for the deployed URL.
 - **Limits:** per account, an app can also be held to messages received in the last 7, 30, or 90
   days, and attachments can be withheld. Older messages then do not appear in lists, searches, or
   conversations, and every tool refuses them. Without attachments, `get_message` leaves out the
-  attachment list, `get_attachment` and its download links are refused, `forward_message` only
+  attachment and embedded-image lists, `get_attachment` and its download links are refused, `forward_message` only
   forwards without attachments, and files of other messages cannot be attached. The server enforces
   both on every tool call.
-- **Attachments:** `get_attachment` returns readable content (text files, images, and the text of
-  PDF, Office, and OpenDocument files as Markdown) and a download link valid for 15 minutes, so
+- **Attachments:** `get_attachment` returns readable content (text files, PNG, JPEG, GIF, and WebP
+  images, and the text of PDF, Office, and OpenDocument files as Markdown) for attachments and
+  images embedded in the body, and a download link valid for 15 minutes, so
   agents with a shell save the file with `curl` instead of reading base64. Scanned documents
   without a text layer come back as unreadable, with a hint to download them and read the pages. To send a local file,
   `create_attachment_upload` returns an upload link valid for one hour (`curl -T`, up to 25 MB);
@@ -156,30 +157,30 @@ shows these steps with copyable commands for the deployed URL.
   - Client ID Metadata Documents and Dynamic Client Registration.
   - PKCE (S256).
 
-| Tool                       | Level            | Purpose                                                                           |
-| -------------------------- | ---------------- | --------------------------------------------------------------------------------- |
-| `list_accounts`            | Read             | Granted accounts with their access levels and limits                              |
-| `list_folders`             | Read             | An account's folders, with roles (inbox, drafts, sent, archive, spam, trash)      |
-| `list_messages`            | Read             | A folder across one or all granted accounts, newest first, with previews, paging  |
-| `search_messages`          | Read             | Search by text, sender, recipient, subject, date, unread, or starred              |
-| `get_message`              | Read             | Headers, body, attachments (if allowed), invitation; does not mark it read        |
-| `get_thread`               | Read             | The whole conversation with each message's new text, sent ones included           |
-| `get_attachment`           | Read             | Readable content and a download link, if attachments are allowed                  |
-| `create_attachment_upload` | Organize or Full | An upload link for a local file to attach                                         |
-| `update_messages`          | Read & organize  | Mark read/unread, star, archive, trash, spam, or move                             |
-| `create_folder`            | Read & organize  | Create a folder at the top level or below another folder                          |
-| `rename_folder`            | Read & organize  | Rename a custom folder in place; message refs inside stay valid                   |
-| `move_folder`              | Read & organize  | Move a custom folder and its subfolders; message refs inside stay valid           |
-| `delete_folder`            | Read & organize  | Delete an empty custom folder; refuses folders that still hold messages           |
-| `reply_to_message`         | Organize or Full | Threaded reply or reply-all with the quote; `mode` is `draft` (default) or `send` |
-| `forward_message`          | Organize or Full | Forward with the original headers, and attachments if allowed                     |
-| `compose_new_message`      | Organize or Full | New conversations only; rejects `Re:` subjects                                    |
-| `send_draft`               | Full             | Send a draft from the Drafts folder                                               |
-| `respond_to_invitation`    | Full             | Accept, tentatively accept, or decline an invitation; sends immediately           |
-| `find_meeting_times`       | Read             | Busy times and times that suit everyone (Exchange only)                           |
-| `create_meeting`           | Organize or Full | Invite attendees to a new meeting; `mode` is `draft` (default) or `send`          |
-| `update_meeting`           | Full             | Change a sent meeting; sends immediately, attendee-only changes to those affected |
-| `cancel_meeting`           | Full             | Cancel a sent meeting; sends immediately                                          |
+| Tool                       | Level            | Purpose                                                                                        |
+| -------------------------- | ---------------- | ---------------------------------------------------------------------------------------------- |
+| `list_accounts`            | Read             | Granted accounts with their access levels and limits                                           |
+| `list_folders`             | Read             | An account's folders, with roles (inbox, drafts, sent, archive, spam, trash)                   |
+| `list_messages`            | Read             | A folder across one or all granted accounts, newest first, with previews, paging               |
+| `search_messages`          | Read             | Search by text, sender, recipient, subject, date, unread, or starred                           |
+| `get_message`              | Read             | Headers, body, attachments and embedded images (if allowed), invitation; does not mark it read |
+| `get_thread`               | Read             | The whole conversation with each message's new text, sent ones included                        |
+| `get_attachment`           | Read             | Readable content and a download link, if attachments are allowed                               |
+| `create_attachment_upload` | Organize or Full | An upload link for a local file to attach                                                      |
+| `update_messages`          | Read & organize  | Mark read/unread, star, archive, trash, spam, or move                                          |
+| `create_folder`            | Read & organize  | Create a folder at the top level or below another folder                                       |
+| `rename_folder`            | Read & organize  | Rename a custom folder in place; message refs inside stay valid                                |
+| `move_folder`              | Read & organize  | Move a custom folder and its subfolders; message refs inside stay valid                        |
+| `delete_folder`            | Read & organize  | Delete an empty custom folder; refuses folders that still hold messages                        |
+| `reply_to_message`         | Organize or Full | Threaded reply or reply-all with the quote; `mode` is `draft` (default) or `send`              |
+| `forward_message`          | Organize or Full | Forward with the original headers, and attachments if allowed                                  |
+| `compose_new_message`      | Organize or Full | New conversations only; rejects `Re:` subjects                                                 |
+| `send_draft`               | Full             | Send a draft from the Drafts folder                                                            |
+| `respond_to_invitation`    | Full             | Accept, tentatively accept, or decline an invitation; sends immediately                        |
+| `find_meeting_times`       | Read             | Busy times and times that suit everyone (Exchange only)                                        |
+| `create_meeting`           | Organize or Full | Invite attendees to a new meeting; `mode` is `draft` (default) or `send`                       |
+| `update_meeting`           | Full             | Change a sent meeting; sends immediately, attendee-only changes to those affected              |
+| `cancel_meeting`           | Full             | Cancel a sent meeting; sends immediately                                                       |
 
 Every tool that lists or uses messages only reaches those within the account's time window.
 Messages are addressed by a short `message_ref` (10 characters) that stays valid when the message
@@ -191,8 +192,9 @@ moves. The tools are built for an AI reviewing a mailbox in few calls and few to
   latest message. Counts and the last sender cover the same folders as `get_thread`: every folder
   but Trash and Spam on Gmail and Exchange, elsewhere Inbox, Sent, and Archive.
 - **Bodies:** plain text converted from the HTML, with tables as Markdown and embedded images as
-  `[image: name]`. `get_message` with `include_quoted: false` and `get_thread` (by default) return
-  only each message's new text; forwards keep the forwarded message.
+  `[image N: name]`. `get_message` lists the images of the returned body under `images` with their
+  `part_id` for `get_attachment`. `get_message` with `include_quoted: false` and `get_thread` (by
+  default) return only each message's new text; forwards keep the forwarded message.
 - **Compact results:** boolean flags appear only when true, `account` only when results span several
   accounts, and `to` in lists only when it is not just the account itself.
 

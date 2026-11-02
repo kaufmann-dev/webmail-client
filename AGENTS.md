@@ -70,7 +70,8 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
   - `messages.ts`: listing, search, reading, moving, and threads. The web list's first page uses
     `listMessagesInStages` (accounts still loading are left out of paging); MCP and "Load more"
     use `listMessages`, which waits for every account. Reading fetches only body text,
-    calendar parts, and embedded images (`structure.ts`); attachments download on demand. Read
+    calendar parts, and embedded images (`structure.ts`); attachments download on demand, and so do
+    embedded images by part ID (`ReadMessage.images`, `MessagePlan.images`). Read
     messages stay in an in-memory cache that `setFlags`, `moveMessages`, and `deleteMessages` keep
     current; drafts are read `fresh`, since Exchange keeps a draft's item ID when another program
     edits it. imapflow reports failed commands as `false`: check every STORE, MOVE, EXPUNGE, and
@@ -100,7 +101,8 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
     `sendDraft` marks the message a reply answers, found by its In-Reply-To when the reply comes
     from a draft.
   - `body-text.ts`: bodies as plain text for AI clients (`ReadMessage.detail.text`) from the HTML
-    when there is one: decoded entities, Markdown data tables, `[image: name]`, and the new text
+    when there is one: decoded entities, Markdown data tables, embedded images numbered as
+    `[image N: name]` (`ReadMessage.images[N-1]`; other images stay `[image: name]`), and the new text
     without quoted messages (`ReadMessage.newText`, by quote containers first, then text patterns;
     forwards keep everything), plus list previews. `messagePreviews` reads only the start of the
     IMAP text part, or Exchange's `item:Preview` (plain text; quote headers cut even where
@@ -170,7 +172,9 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
     through `access.requireMessages`, which checks dates with `receivedDates` without reading.
   - Lists pass `access.notBefore(accounts)` to `listMessages`, and threads pass through
     `access.visible`.
-  - Without attachments, `get_message` leaves out the attachment list (file names included).
+  - Without attachments, `get_message` leaves out the attachment and image lists (file names
+    included). Its `images` lists only the embedded images whose `[image N: …]` is in the returned
+    body; `get_thread` lists none.
   - `create_meeting` needs `organize` for drafts and `send` to send, like `compose_new_message`;
     `find_meeting_times` needs `read`. `update_meeting` and `cancel_meeting` need `send`.
   - Folder tools need `organize`. `delete_folder` deletes only empty folders, since a full delete
@@ -185,8 +189,10 @@ pnpm db:generate       # after editing src/lib/server/db/schema.ts
 - Attachment bytes never pass through tool calls. `get_attachment` returns readable content
   (`mail/attachment-text.ts`: text files, and documents as Markdown via `officeparser`) and a
   download link; `create_attachment_upload` returns an upload link, and sending tools take
-  `{upload_id}` or `{message_ref, part_id}`. Exchange attachment IDs are checked against the
-  message's own attachments, so a part ID cannot reach a message outside the time window. The links (`mcp/transfers.ts`, routes
+  `{upload_id}` or `{message_ref, part_id}`. Image content goes out only as PNG, JPEG, GIF, or
+  WebP; other image types are offered for download. Exchange attachment IDs are checked against the
+  message's own attachments and embedded images, so a part ID cannot reach a message outside the
+  time window. The links (`mcp/transfers.ts`, routes
   `/mcp/files/[token]` and `/mcp/uploads/[token]`) live in memory only, are authenticated by their
   token alone, and are bound to the user and OAuth client; downloads check access again when
   fetched.

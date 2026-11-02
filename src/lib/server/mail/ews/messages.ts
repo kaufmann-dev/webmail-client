@@ -1,5 +1,5 @@
 import { simpleParser } from 'mailparser';
-import type { Address, MessageDetail, MessageSummary } from '../../../mail-types';
+import type { Address, AttachmentInfo, MessageDetail, MessageSummary } from '../../../mail-types';
 import { bodyText, previewOfCollapsed } from '../body-text';
 import { MailError, MessageGoneError } from '../errors';
 import { findCalendarPart, isCalendarPart, parseInvitation } from '../invitations';
@@ -164,6 +164,15 @@ function attachmentContent({ node, item }: AttachmentNode): Buffer {
 	return Buffer.from(text(attached?.MimeContent), 'base64');
 }
 
+function attachmentInfo(attachment: EwsAttachment): AttachmentInfo {
+	return {
+		partId: partIdOf(attachment.id),
+		filename: attachmentFileName(attachment),
+		contentType: attachment.contentType,
+		size: attachment.size
+	};
+}
+
 /** Replaces `cid:` references to embedded images with data URIs. */
 async function embedImages(
 	account: MailAccount,
@@ -216,14 +225,15 @@ export async function readMessage(account: MailAccount, locator: EwsLocator): Pr
 	const summary = summaryOf(account.id, locator.path, node, 0);
 	const attachments = attachmentsOf(node);
 	const body = text(node.Body);
+	const embeddable = new Map(
+		attachments.flatMap((a) => (a.contentId && !a.item ? [[a.contentId, a] as const] : []))
+	);
 	// The text comes from the HTML body (Exchange's own TextBody leaves entities and `[cid:…]`).
 	const plain = bodyText({
 		html: body || null,
 		text: '',
 		subject: summary.subject,
-		images: new Map(
-			attachments.flatMap((a) => (a.contentId && a.name ? [[a.contentId, a.name] as const] : []))
-		)
+		images: new Map([...embeddable].map(([cid, a]) => [cid, attachmentFileName(a)]))
 	});
 	const cc = mailboxes(child(node, 'CcRecipients'));
 	const bcc = mailboxes(child(node, 'BccRecipients'));
@@ -255,14 +265,7 @@ export async function readMessage(account: MailAccount, locator: EwsLocator): Pr
 		text: plain.text,
 		html: sanitized?.html ?? textToHtml(plain.text),
 		hasRemoteImages: sanitized?.hasRemoteImages ?? false,
-		attachments: attachments
-			.filter((a) => !embedded.has(a.id))
-			.map((a) => ({
-				partId: partIdOf(a.id),
-				filename: attachmentFileName(a),
-				contentType: a.contentType,
-				size: a.size
-			})),
+		attachments: attachments.filter((a) => !embedded.has(a.id)).map(attachmentInfo),
 		invitation: calendar ? parseInvitation(calendar, account.email) : null
 	};
 	return {
@@ -270,7 +273,8 @@ export async function readMessage(account: MailAccount, locator: EwsLocator): Pr
 		newText: plain.newText,
 		sentAt: dateOrNull(text(node.DateTimeSent)),
 		calendar,
-		incomplete: !complete || calendarFailed
+		incomplete: !complete || calendarFailed,
+		images: plain.images.map((cid) => attachmentInfo(embeddable.get(cid)!))
 	};
 }
 

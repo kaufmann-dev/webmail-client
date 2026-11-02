@@ -6,6 +6,7 @@ import {
 	INVITATION_RESPONSES,
 	LIST_FILTERS,
 	type Address,
+	type AttachmentInfo,
 	type Invitation,
 	type MessageSummary
 } from '../../mail-types';
@@ -25,6 +26,7 @@ import { MCP_RESOURCE } from '../auth';
 import { parseAddressList } from '../mail/addresses';
 import { attachmentText } from '../mail/attachment-text';
 import { findMeetingTimes } from '../mail/availability';
+import { imageNumbers } from '../mail/body-text';
 import { groupConversations, type Conversation } from '../mail/conversations';
 import { errorMessage, MailError, MessageGoneError } from '../mail/errors';
 import {
@@ -89,7 +91,9 @@ send; drafts appear in the account's Drafts folder for the user to review, and s
 one later. Reading a message never marks it as read.
 
 Attachments: get_attachment returns readable content (text, images, and the text of PDF and
-Office documents) and a short-lived download_url to save the file with curl. To attach a local
+Office documents) and a short-lived download_url to save the file with curl. Images embedded in a
+body appear there as [image N: name], also in get_thread; get_message lists them under "images"
+with the part_id for get_attachment. To attach a local
 file, call create_attachment_upload, PUT the file to its upload_url, and pass {"upload_id"} in
 attachments. A file that is already in a message is attached with {"message_ref", "part_id"},
 without downloading it.
@@ -166,6 +170,8 @@ const MAX_THREAD_BODY_CHARS = 20_000;
 const MAX_THREAD_MESSAGES = 30;
 const MAX_PARTICIPANTS = 10;
 const MAX_INLINE_IMAGE_BYTES = 5 * 1024 * 1024;
+/** Image types AI clients accept as image content; others are offered for download only. */
+const MODEL_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 const MAX_OUTGOING_BYTES = 25 * 1024 * 1024;
 
 const messageRef = z.string().min(1).describe('A message_ref from a listing tool.');
@@ -206,7 +212,7 @@ const attachmentInput = z
 			}),
 			z.object({
 				message_ref: messageRef,
-				part_id: z.string().min(1).describe('An attachment part_id from get_message.')
+				part_id: z.string().min(1).describe('An attachment or image part_id from get_message.')
 			})
 		])
 	)
@@ -247,6 +253,24 @@ function bodyOut(
 		...(quotedRemoved && { quoted_removed: true }),
 		...(truncated && { body_truncated: true })
 	};
+}
+
+/** The embedded images whose `[image N: …]` is in the returned body, with their numbers. */
+function imagesOut(body: string, images: AttachmentInfo[]) {
+	const shown = imageNumbers(body);
+	return images.flatMap((image, index) =>
+		shown.has(index + 1)
+			? [
+					{
+						number: index + 1,
+						part_id: image.partId,
+						filename: image.filename,
+						content_type: image.contentType,
+						size: image.size
+					}
+				]
+			: []
+	);
 }
 
 /** One server per request, holding the client's grants for that request. */
@@ -805,8 +829,10 @@ export function createMcpServer(
 		{
 			title: 'Read message',
 			description:
-				"Returns a message's headers, plain-text body, attachment list (unless the account withholds attachments), " +
-				'and calendar invitation if it carries one. Does not mark it as read. ' +
+				"Returns a message's headers, plain-text body, attachment list and embedded images (unless the account " +
+				'withholds attachments), and calendar invitation if it carries one. Does not mark it as read. ' +
+				'The body marks embedded images as [image N: name]; images lists those in the returned body with ' +
+				'the part_id for get_attachment. ' +
 				'Parameter include_quoted (default true): false returns only the new text of a reply, without the ' +
 				'quoted earlier messages, and sets quoted_removed. For a whole conversation use get_thread instead.',
 			inputSchema: z.object({
@@ -826,18 +852,21 @@ export function createMcpServer(
 					access.requireMessage(ref, 'read')
 				);
 				const { detail } = read;
-				// File names can be sensitive too, so a grant without attachments hides the list.
+				const body = bodyOut(read, include_quoted, MAX_BODY_CHARS);
+				const images = grant.allowAttachments ? imagesOut(body.body, read.images) : [];
+				// File names can be sensitive too, so a grant without attachments hides the lists.
 				const attachments = grant.allowAttachments
-					? detail.attachments.length
-						? {
+					? {
+							...(detail.attachments.length && {
 								attachments: detail.attachments.map((a) => ({
 									part_id: a.partId,
 									filename: a.filename,
 									content_type: a.contentType,
 									size: a.size
 								}))
-							}
-						: {}
+							}),
+							...(images.length && { images })
+						}
 					: { attachments_allowed: false };
 				return {
 					message_ref: await shortRefOf(detail.ref, detail.accountId, detail.messageId),
@@ -856,7 +885,7 @@ export function createMcpServer(
 					...(detail.invitation && { invitation: invitationOut(detail.invitation) }),
 					// Its calendar part or embedded images could not be fetched; reading again retries.
 					...(read.incomplete && { incomplete: true }),
-					...bodyOut(read, include_quoted, MAX_BODY_CHARS)
+					...body
 				};
 			})
 	);
@@ -937,8 +966,9 @@ export function createMcpServer(
 		{
 			title: 'Get attachment',
 			description:
-				'Returns one attachment: its readable content (text files, images, and the text of PDF, Office, ' +
-				'and OpenDocument files) and a download_url, valid for 15 minutes, to save the file itself ' +
+				'Returns one attachment or embedded image: its readable content (text files, PNG, JPEG, GIF, and ' +
+				'WebP images, and the text of PDF, Office, and OpenDocument files) and a download_url, valid ' +
+				'for 15 minutes, to save the file itself ' +
 				'with `curl -fo <filename> <download_url>`.',
 			inputSchema: z.object({ message_ref: messageRef, part_id: z.string().min(1) }),
 			annotations: { readOnlyHint: true }
@@ -960,7 +990,7 @@ export function createMcpServer(
 					download_url: `${MCP_RESOURCE}/files/${download.token}`,
 					expires_at: new Date(download.expiresAt).toISOString()
 				};
-				if (type.startsWith('image/')) {
+				if (MODEL_IMAGE_TYPES.has(type)) {
 					return {
 						content: [
 							{ type: 'text', text: JSON.stringify(info) },

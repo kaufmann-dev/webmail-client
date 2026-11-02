@@ -43,14 +43,23 @@ describe('planMessage', () => {
 		expect(plan.whole).toBe(false);
 		expect(plan.fetch).toEqual(['1.1.1', '1.1.2', '1.2', '3']);
 		expect(plan.attachments).toEqual([
-			{ partId: '2', filename: 'report.pdf', contentType: 'application/pdf', size: 3000 },
-			{ partId: '3', filename: null, contentType: 'text/calendar', size: 30 }
+			{
+				partId: '2',
+				filename: 'report.pdf',
+				contentType: 'application/pdf',
+				size: 3000,
+				contentId: null
+			},
+			{ partId: '3', filename: null, contentType: 'text/calendar', size: 30, contentId: null }
+		]);
+		expect(plan.images).toEqual([
+			{ partId: '1.2', filename: null, contentType: 'image/png', size: 6, contentId: 'logo' }
 		]);
 	});
 
 	it('fetches single-part messages whole', () => {
 		const plan = planMessage({ type: 'text/plain', size: 10 } as MessageStructureObject);
-		expect(plan).toEqual({ whole: true, fetch: ['1'], attachments: [] });
+		expect(plan).toEqual({ whole: true, fetch: ['1'], attachments: [], images: [] });
 	});
 });
 

@@ -7,6 +7,8 @@ export interface StructurePart {
 	contentType: string;
 	/** Decoded size, estimated from the transferred size. */
 	size: number;
+	/** The Content-ID without angle brackets, by which HTML embeds the part (`cid:`). */
+	contentId: string | null;
 }
 
 export interface MessagePlan {
@@ -16,6 +18,11 @@ export interface MessagePlan {
 	fetch: string[];
 	/** Parts offered as attachments, fetched only when opened. */
 	attachments: StructurePart[];
+	/**
+	 * Images with a Content-ID, whatever their disposition: the HTML may embed them, and they can be
+	 * downloaded like attachments.
+	 */
+	images: StructurePart[];
 }
 
 const BODY_TYPES = new Set(['text/plain', 'text/html']);
@@ -36,7 +43,7 @@ function decodedSize(node: MessageStructureObject): number {
  * HTML and are not listed, matching mailparser's `related` attachments.
  */
 export function planMessage(root: MessageStructureObject | undefined): MessagePlan {
-	const plan: MessagePlan = { whole: false, fetch: [], attachments: [] };
+	const plan: MessagePlan = { whole: false, fetch: [], attachments: [], images: [] };
 	if (!root) return { ...plan, whole: true };
 
 	const leaf = (node: MessageStructureObject, partId: string, related: boolean) => {
@@ -46,8 +53,10 @@ export function planMessage(root: MessageStructureObject | undefined): MessagePl
 			partId,
 			filename: node.dispositionParameters?.filename ?? node.parameters?.name ?? null,
 			contentType: type,
-			size: decodedSize(node)
+			size: decodedSize(node),
+			contentId: node.id?.replace(/^<|>$/g, '') || null
 		};
+		if (part.contentId && type.startsWith('image/')) plan.images.push(part);
 		if (!attachment && BODY_TYPES.has(type)) {
 			plan.fetch.push(partId);
 		} else if (CALENDAR_TYPES.has(type)) {

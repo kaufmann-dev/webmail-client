@@ -10,6 +10,7 @@ import { simpleParser, type AddressObject, type ParsedMail } from 'mailparser';
 import type {
 	AccountError,
 	Address,
+	AttachmentInfo,
 	ListFilter,
 	MessageDetail,
 	MessagePage,
@@ -441,10 +442,25 @@ export interface ReadMessage {
 	 * shows without it. Such a read is not cached, and drafts and invitations refuse it.
 	 */
 	incomplete: boolean;
+	/**
+	 * Embedded images in the order they are numbered in the text: `images[N-1]` is `[image N: …]`
+	 * in `detail.text` and `newText`. They download like attachments, by part ID.
+	 */
+	images: AttachmentInfo[];
 }
 
+/** The file name, else the Content-ID's local part (as embedded images often lack one). */
 function attachmentName(part: StructurePart): string {
-	return part.filename ?? `attachment-${part.partId}`;
+	return part.filename ?? (part.contentId?.split('@')[0] || `attachment-${part.partId}`);
+}
+
+function attachmentInfo(part: StructurePart): AttachmentInfo {
+	return {
+		partId: part.partId,
+		filename: attachmentName(part),
+		contentType: part.contentType,
+		size: part.size
+	};
 }
 
 /** Embedded images inlined as data URIs, at most this much per message (as mailparser does). */
@@ -468,24 +484,18 @@ function inlineImages(html: string, parsed: ParsedMail): string {
 	});
 }
 
-/** File names of embedded images by Content-ID, for `[image: name]` in the text. */
-function imageNames(parsed: ParsedMail): Map<string, string> {
-	return new Map(
-		parsed.attachments.flatMap((a) => (a.cid && a.filename ? [[a.cid, a.filename] as const] : []))
-	);
-}
-
 async function readImapMessage(account: MailAccount, locator: ImapLocator): Promise<ReadMessage> {
 	const { message, mailbox, plan, source } = await fetchForReading(account, locator);
-	// Images stay `cid:` links until the text is taken, which names them by file name.
+	// Images stay `cid:` links until the text is taken, which numbers and names them.
 	const parsed = await simpleParser(source, { skipImageLinks: true });
 	const summary = toSummary(account, locator.path, mailbox, message);
 	const subject = parsed.subject ?? summary.subject;
+	const images = new Map(plan.images.map((part) => [part.contentId!, part]));
 	const body = bodyText({
 		html: parsed.html || null,
 		text: parsed.text ?? '',
 		subject,
-		images: imageNames(parsed)
+		images: new Map([...images].map(([cid, part]) => [cid, attachmentName(part)]))
 	});
 	const html = parsed.html ? sanitizeEmailHtml(inlineImages(parsed.html, parsed)) : null;
 	const calendar = findCalendarPart(parsed.attachments);
@@ -506,16 +516,7 @@ async function readImapMessage(account: MailAccount, locator: ImapLocator): Prom
 		hasRemoteImages: html?.hasRemoteImages ?? false,
 		// An unnamed calendar part is the invitation's machine-readable form, shown as the invitation.
 		attachments: plan.attachments.flatMap((part) =>
-			invitation && !part.filename && isCalendarPart(part)
-				? []
-				: [
-						{
-							partId: part.partId,
-							filename: attachmentName(part),
-							contentType: part.contentType,
-							size: part.size
-						}
-					]
+			invitation && !part.filename && isCalendarPart(part) ? [] : [attachmentInfo(part)]
 		),
 		invitation
 	};
@@ -524,7 +525,8 @@ async function readImapMessage(account: MailAccount, locator: ImapLocator): Prom
 		newText: body.newText,
 		sentAt: parsed.date ?? null,
 		calendar,
-		incomplete: false
+		incomplete: false,
+		images: body.images.map((cid) => attachmentInfo(images.get(cid)!))
 	};
 }
 
@@ -631,8 +633,8 @@ export async function getAttachments(
 	if (account.provider === 'exchange') {
 		ewsLocator(messageLocator);
 		// Exchange fetches attachments by their own IDs; only those of this message may be fetched.
-		const { detail } = await getMessage(account, messageLocator);
-		const listed = new Set(detail.attachments.map((a) => a.partId));
+		const { detail, images } = await getMessage(account, messageLocator);
+		const listed = new Set([...detail.attachments, ...images].map((a) => a.partId));
 		if (partIds.some((partId) => !listed.has(partId))) {
 			throw new MailError('Attachment not found.', 404);
 		}
@@ -644,10 +646,10 @@ export async function getAttachments(
 		const uid = String(locator.uid);
 		const message = await client.fetchOne(uid, { bodyStructure: true }, { uid: true });
 		if (!message) throw new MessageGoneError();
-		const { attachments } = planMessage(message.bodyStructure);
+		const { attachments, images } = planMessage(message.bodyStructure);
 		const files = [];
 		for (const partId of partIds) {
-			const part = attachments.find((a) => a.partId === partId);
+			const part = [...attachments, ...images].find((a) => a.partId === partId);
 			if (!part) throw new MailError('Attachment not found.', 404);
 			const { content } = await client.download(uid, partId, {
 				uid: true,
