@@ -1,7 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-	<style>
-		svg { fill: #000000; }
-		@media (prefers-color-scheme: dark) { svg { fill: #ffffff; } }
-	</style>
-	<path d="M2 6h28L16 16zM2 10l14 10 14-10v16H2z" />
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><title>Webmail</title><defs><linearGradient id="g" x1="3" y1="3" x2="29" y2="29" gradientUnits="userSpaceOnUse"><stop class="g-a"/><stop class="g-b" offset="1"/></linearGradient></defs><style>.g-a{stop-color:#268bfc}.g-b{stop-color:#6c4bcc}@media (prefers-color-scheme:dark){.g-a{stop-color:#a2caff}.g-b{stop-color:#9f89fe}}</style><g stroke-width="3" stroke-linecap="butt" stroke-linejoin="miter"><path d="M3 6H29L16 15.5Z" fill="url(#g)"/><path d="M3 9.7L16 19.2L29 9.7V26H3Z" fill="url(#g)"/></g></svg>
